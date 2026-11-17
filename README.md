@@ -2,7 +2,7 @@
 
 A make.fun **token-radar-01** entry: a radar that ranks pre-token protocols by the value their
 token would carry if it launched on the snapshot's own record, and gives every row a concrete
-farm plan. Model **radar-2.2**.
+farm plan. Model **radar-2.3**.
 
 ## Run it
 
@@ -19,17 +19,25 @@ beside them, and writes `dossier.json` last with the vendored `buildDossier`.
 Implied value = TVL × category multiple × relative growth × maturity × breadth × scale. The
 category multiple is the median market-cap/TVL of the tokenised protocols in the same category,
 computed from the snapshot itself and shrunk toward the global median in log space (shrinkage
-weight estimated from the data's variance components). A category with fewer than 3 tokenised
-peers has no multiple of its own: its rows are scored on the midpoint of the global median and
-the median multiple of the peers in the protocol's own TVL band — the snapshot's largest
-protocols trade near 0.03×, its smallest near 0.87× — and the row's published range spans the
-two, so the weakest estimates carry the widest stated uncertainty. Growth is scored relative
-to the category's own median 7-day change, clamped at ±30pp with weight 0.50. Maturity rises
-from 0.70 to 1.00 the longer a protocol has run without a token; breadth adds up to +7% for
-multi-chain reach; scale is a smooth size discount, (TVL / $1B)^−0.10 clamped to [0.85, 1.00],
-with no cliff. The model also grades itself — a leave-one-out backtest over the snapshot's
-priced peers, the board's rank correlation with raw TVL, and rank stability at a forced k —
-and the Methodology view prints the grades, including the metric the flat median wins.
+weight estimated from the data's variance components). The peers are cleaned first: duplicate
+deployments of one token collapse to the largest, and a peer whose ratio falls outside
+[0.002, 3.0] — a parent token's cap recorded against a side deployment, or a dead token — is
+set aside. Every ratio median is a geometric median. A category earns its own multiple when
+its peers corroborate each other (at least two), or when its single peer is itself substantial
+and near the row's own scale; otherwise its rows are scored on the geometric midpoint of the
+global median and the median multiple of the peers in the protocol's own TVL band — the
+snapshot's largest protocols trade near 0.03×, its smallest near 0.38× — and the row's
+published range spans the two, so the weakest estimates carry the widest stated uncertainty.
+Growth is scored relative to the category's own median 7-day change, clamped at ±30pp with
+weight 0.50. Maturity rises from 0.70 to 1.00 the longer a protocol has run without a token;
+breadth adds up to +7% for multi-chain reach; scale is a smooth size discount,
+(TVL / $1B)^−0.10 clamped to [0.85, 1.00], with no cliff. The model also grades itself — a
+leave-one-out backtest over the cleaned peer set, the board's rank correlation with raw TVL,
+and rank stability at a forced k — and the Methodology view prints the grades with their
+limits stated: the board's order is largely TVL's order, and what the model adds is
+calibration of levels, not a better order. Two watchlist rows known to accrue value to tokens
+that already trade (USDD, Bittensor dTAO) are disclosed as a manual-review exception in the
+model and on the Methodology view; they stay on the board because every watchlist slug must.
 
 The board ranks only protocols that record no token and pass the genuineness screen the
 snapshot's watchlist itself uses (no wrapped/staked/bridged products of trading tokens, no

@@ -1,4 +1,4 @@
-// Token Launch Radar — model radar-2.1.
+// Token Launch Radar — model radar-2.3.
 //
 // One sealed DefiLlama snapshot in, one ranked board of pre-token protocols out. Every figure on the
 // board is derived from the snapshot's own ten fields per protocol; no protocol name is ever
@@ -23,12 +23,22 @@
 //               this snapshot, shrunk toward the global median multiple in log space with a
 //               shrinkage weight k estimated from the data itself (within-category variance of log
 //               ratios over between-category variance of category medians). The result is clamped
-//               to [0.03, 1.20]. A category with fewer than 3 tokenised peers has no multiple of
-//               its own: the row is scored on the midpoint of two snapshot medians — the global
-//               median and the median of the peers in the protocol's own TVL band, because the
-//               snapshot's large protocols trade at far lower multiples than its small ones —
-//               and the row's range spans the two, so the weakest estimates on the board carry
-//               the widest stated uncertainty instead of a flag alone. The row is flagged.
+//               to [0.03, 1.20]. Every ratio median is a geometric median (the median in log
+//               space), so even peer counts are never averaged in linear space. The peer set is
+//               cleaned before it calibrates anything: two rows carrying the same token (same
+//               symbol, same market cap — one token, several deployments) collapse to the
+//               largest-TVL deployment, and a peer whose ratio falls outside [0.002, 3.0] is set
+//               aside as a data error — a market cap 400x or 1/500th of a protocol's TVL is a
+//               parent token's cap or a dead token's, not evidence about that protocol.
+//               A category speaks for itself when its peers can corroborate each other (at least
+//               two), or when its single peer is itself substantial (TVL at or above the
+//               snapshot's own floor) and within one TVL band of the row being scored — a lone
+//               small peer cannot price a category of giants. Otherwise the row falls back: it is
+//               scored on the geometric midpoint of two snapshot medians — the global median and
+//               the median of the peers in the protocol's own TVL band, because the snapshot's
+//               large protocols trade at far lower multiples than its small ones — and the row's
+//               range spans the two, so the weakest estimates on the board carry the widest
+//               stated uncertainty instead of a flag alone. The row is flagged.
 //   growth    = 1 + 0.50 x clamp(change_7d - category median change_7d, -30, +30) / 100, so a
 //               protocol is scored on momentum relative to its own category, in [0.85, 1.15]. A
 //               missing change_7d scores as its category's median (relative growth 0).
@@ -41,10 +51,13 @@
 //   implied   = round(TVL x multiple x growth x maturity x breadth x scale), at least $1.
 //
 // The model also grades itself, and the dashboard's Methodology view prints the grades: a
-// leave-one-out backtest over every tokenised peer (hide one, predict its multiple from the
-// rest, compare with the flat global median as the baseline), the Spearman rank correlation
-// between the board's order and raw TVL, and the board's rank stability when the shrinkage
-// weight is raised from the estimated k to 6.
+// leave-one-out backtest over the cleaned peer set (hide one, predict its multiple from the
+// rest, compare with the flat global median as the baseline), the rank correlation of those
+// predictions, the Spearman rank correlation between the board's order and raw TVL, and the
+// board's rank stability when the shrinkage weight is raised from the estimated k to 6. The
+// grades are stated the way the evidence supports: the board's order is largely TVL's order,
+// and what the model adds is calibration — what a dollar of a category's TVL has historically
+// been worth — not a better order.
 //
 // A separate launch-priority score (0-100) is shown on the dashboard only and never affects rank:
 // the category's tokenisation rate scaled by an age-overdue curve that peaks at 400-1000 days
@@ -73,13 +86,14 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-2.2';
+export const MODEL_VERSION = 'radar-2.3';
 
 /** The model's constants, stated on the dashboard's Methodology view. */
 export const MODEL = {
   multiple_floor: 0.03,
   multiple_cap: 1.2,
-  min_peers: 3,
+  peer_ratio_min: 0.002,
+  peer_ratio_max: 3,
   thin_peers: 6,
   growth_weight: 0.5,
   growth_clamp_pp: 30,
@@ -125,6 +139,11 @@ function median(values: number[]): number {
   return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
+function medianLog(values: number[]): number {
+  if (values.length === 0) return 0;
+  return Math.exp(median(values.map((v) => Math.log(v))));
+}
+
 function mean(values: number[]): number {
   return values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length;
 }
@@ -150,6 +169,38 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
 /** Whether a protocol records no token at all. */
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
+}
+
+/** The peer set, cleaned: the tokenised protocols whose ratios may calibrate the model. */
+export interface PeerCleaning {
+  peers: SnapshotProtocol[];
+  raw: number;
+  deduped: number;
+  used: number;
+}
+
+/**
+ * The model's evidence, screened the way the board's targets are screened. Two rows that carry
+ * the same token (same symbol and the same market cap — one token recorded against several
+ * deployments) collapse to the deployment with the largest TVL, so a parent token's cap is never
+ * counted against a side deployment. A peer whose market-cap/TVL falls outside
+ * [peer_ratio_min, peer_ratio_max] is then set aside: at 400x the cap belongs to something else,
+ * at 1/500th the token is dead — neither prices the protocol it sits on.
+ */
+export function cleanPeers(snapshot: Snapshot): PeerCleaning {
+  const raw = snapshot.protocols.filter((p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const byToken = new Map<string, SnapshotProtocol>();
+  for (const p of raw) {
+    const key = p.symbol !== null ? `${p.symbol}|${p.mcap_usd}` : `slug|${p.slug}`;
+    const cur = byToken.get(key);
+    if (cur === undefined || p.tvl_usd > cur.tvl_usd || (p.tvl_usd === cur.tvl_usd && p.slug < cur.slug)) byToken.set(key, p);
+  }
+  const deduped = [...byToken.values()];
+  const peers = deduped.filter((p) => {
+    const r = p.mcap_usd! / p.tvl_usd;
+    return r >= MODEL.peer_ratio_min && r <= MODEL.peer_ratio_max;
+  });
+  return { peers, raw: raw.length, deduped: deduped.length, used: peers.length };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -197,6 +248,7 @@ export interface CategoryStat {
   total: number;
   median_change_7d: number | null;
   peer_examples: PeerExample[];
+  single_peer_tvl: number | null;
 }
 
 /** Everything the model learns from the snapshot before scoring a single row. */
@@ -214,10 +266,20 @@ export interface Calibration {
   screened_by_category: { category: string; count: number }[];
   pre_token: number;
   tokenised: number;
+  peers_raw: number;
+  peers_deduped: number;
+  peers_used: number;
+  floor_usd: number;
 }
 
 function categoryKey(p: SnapshotProtocol): string {
   return p.category ?? '(uncategorised)';
+}
+
+/** The index of the TVL band a value falls in. */
+export function bandIndex(tvl: number): number {
+  const idx = TVL_BANDS.findIndex((b) => tvl >= b.lo && tvl < b.hi);
+  return idx === -1 ? TVL_BANDS.length - 1 : idx;
 }
 
 /**
@@ -227,9 +289,10 @@ function categoryKey(p: SnapshotProtocol): string {
  * their own multiple, scattered ones are pulled to the market's.
  */
 export function calibrate(snapshot: Snapshot, kOverride?: number): Calibration {
-  const tokenised = snapshot.protocols.filter((p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const cleaning = cleanPeers(snapshot);
+  const tokenised = cleaning.peers;
   const allRatios = tokenised.map((p) => p.mcap_usd! / p.tvl_usd);
-  const globalMedian = median(allRatios);
+  const globalMedian = medianLog(allRatios);
   const globalLog = Math.log(globalMedian);
 
   const byCategory = new Map<string, SnapshotProtocol[]>();
@@ -276,8 +339,9 @@ export function calibrate(snapshot: Snapshot, kOverride?: number): Calibration {
   for (const [key, all] of byCategory) {
     const peers = peersByCategory.get(key) ?? [];
     const ratios = peers.map((p) => p.mcap_usd! / p.tvl_usd);
-    const rawMedian = ratios.length > 0 ? median(ratios) : globalMedian;
-    const fallback = peers.length < MODEL.min_peers;
+    const rawMedian = ratios.length > 0 ? medianLog(ratios) : globalMedian;
+    const singlePeerTvl = peers.length === 1 ? peers[0]!.tvl_usd : null;
+    const fallback = !(peers.length >= 2 || (peers.length === 1 && singlePeerTvl !== null && singlePeerTvl >= snapshot.floor_usd));
     const shrunk = fallback
       ? globalMedian
       : Math.exp((peers.length * Math.log(rawMedian) + k * globalLog) / (peers.length + k));
@@ -292,11 +356,12 @@ export function calibrate(snapshot: Snapshot, kOverride?: number): Calibration {
       total: all.length,
       median_change_7d: changes.length > 0 ? round2(median(changes)) : null,
       peer_examples:
-        peers.length > 0 && peers.length < MODEL.min_peers
+        peers.length > 0 && peers.length <= 2
           ? [...peers]
               .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1))
               .map((p) => ({ slug: p.slug, multiple: round4(p.mcap_usd! / p.tvl_usd), tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd! }))
           : [],
+      single_peer_tvl: singlePeerTvl,
     });
   }
 
@@ -306,7 +371,7 @@ export function calibrate(snapshot: Snapshot, kOverride?: number): Calibration {
     return {
       label: b.label,
       peers: inBand.length,
-      median_multiple: round4(inBand.length > 0 ? median(inBand.map((p) => p.mcap_usd! / p.tvl_usd)) : globalMedian),
+      median_multiple: round4(inBand.length > 0 ? medianLog(inBand.map((p) => p.mcap_usd! / p.tvl_usd)) : globalMedian),
     };
   });
   const bandMedianByTvl = (tvl: number): number => {
@@ -345,6 +410,10 @@ export function calibrate(snapshot: Snapshot, kOverride?: number): Calibration {
     screened_version: snapshot.protocols.filter((p) => isPreToken(p) && screenReason(p) === 'version').length,
     pre_token: snapshot.protocols.filter(isPreToken).length,
     tokenised: snapshot.protocols.filter((p) => !isPreToken(p)).length,
+    peers_raw: cleaning.raw,
+    peers_deduped: cleaning.deduped,
+    peers_used: cleaning.used,
+    floor_usd: snapshot.floor_usd,
   };
 }
 
@@ -398,10 +467,21 @@ function overdue(age: number | null): number {
 export function score(p: SnapshotProtocol, asOf: string, cal: Calibration): Score {
   const stat = cal.categories.get(categoryKey(p));
   const peers = stat?.peers ?? 0;
-  const fallback = stat?.fallback ?? true;
+  let fallback = true;
+  if (stat !== undefined) {
+    if (peers >= 2) fallback = false;
+    else if (
+      peers === 1 &&
+      stat.single_peer_tvl !== null &&
+      stat.single_peer_tvl >= cal.floor_usd &&
+      Math.abs(bandIndex(stat.single_peer_tvl) - bandIndex(p.tvl_usd)) <= 1
+    ) {
+      fallback = false;
+    }
+  }
   const bandMultiple = fallback ? cal.band_median_by_tvl(p.tvl_usd) : null;
   const multiple = fallback
-    ? round4(clamp((cal.global_median + bandMultiple!) / 2, MODEL.multiple_floor, MODEL.multiple_cap))
+    ? round4(clamp(Math.sqrt(cal.global_median * bandMultiple!), MODEL.multiple_floor, MODEL.multiple_cap))
     : (stat?.multiple ?? cal.global_median);
   const multLow = fallback ? Math.min(cal.global_median, bandMultiple!) : multiple;
   const multHigh = fallback ? Math.max(cal.global_median, bandMultiple!) : multiple;
@@ -578,6 +658,18 @@ export interface BoardRow {
   farm_steps: string[];
 }
 
+/**
+ * The model's one disclosed manual exception. Two watchlist rows are known from outside the
+ * snapshot to have their value accruing to a token that already trades; the snapshot records no
+ * token for either, and the gate requires every watchlist slug on the board, so they stay —
+ * flagged here, in their drawers and on the Methodology view, never silently priced as launches
+ * and never silently removed. The list changes no number the model computes.
+ */
+export const MANUAL_REVIEW: Record<string, string> = {
+  usdd: 'USDD already trades as a token (issued on Tron); the snapshot records no token for this row. Read the implied value as the live token\'s scale, not as a future launch.',
+  'bittensor-dtao': 'This product\'s value accrues to TAO, a token that already trades; the snapshot records no token for the row itself. Read the implied value as belonging to the live token, not to a future launch.',
+};
+
 /** The dashboard's view of one board row, farm plan included so the detail view shows the board's own plan. */
 export interface RadarRow {
   rank: number;
@@ -603,6 +695,8 @@ export interface RadarRow {
   p_launch: number;
   ev_usd: number;
   cross_check_usd: number | null;
+  cross_check_agree_pct: number | null;
+  manual_review: string | null;
   verify_token: boolean;
   risk: 'low' | 'medium' | 'high';
   risk_flags: string[];
@@ -642,6 +736,8 @@ export interface Validation {
   loo_flat_median_abs_log_err: number;
   loo_model_within_2x_pct: number;
   loo_flat_within_2x_pct: number;
+  loo_model_rank_ic: number;
+  loo_flat_rank_ic: number;
   spearman_implied_vs_tvl: number;
   k_alt: number;
   k_alt_top10_overlap: number;
@@ -673,6 +769,9 @@ export interface RadarData {
   screened_exchange_name: number;
   screened_version: number;
   screened_by_category: { category: string; count: number }[];
+  peers_raw: number;
+  peers_deduped: number;
+  peers_used: number;
   bands: BandStat[];
   validation: Validation;
   categories: CategoryView[];
@@ -778,42 +877,54 @@ function pearson(a: number[], b: number[]): number {
 }
 
 /**
- * The model grading itself on the snapshot's own evidence. Leave-one-out: every tokenised peer
- * is hidden in turn and its multiple predicted by the model's own rules — category shrinkage
- * when the category keeps at least 3 peers, the TVL-band fallback otherwise — against the flat
- * global median as the baseline. Plus the board's rank correlation with raw TVL, and its rank
- * stability when the shrinkage weight is forced from the estimated k up to 6.
+ * The model grading itself on the snapshot's own evidence. Leave-one-out over the cleaned peer
+ * set: every peer is hidden in turn and its multiple predicted by the model's own rules — the
+ * corroboration rule for category shrinkage, the geometric TVL-band fallback otherwise —
+ * against the flat global median as the baseline, in levels and in ranks. Plus the board's rank
+ * correlation with raw TVL, and its rank stability when the shrinkage weight is forced from the
+ * estimated k up to 6.
  */
 export function validateModel(snapshot: Snapshot, cal: Calibration, board: BoardRow[]): Validation {
-  const peers = snapshot.protocols.filter((p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const peers = cleanPeers(snapshot).peers;
   const modelErrs: number[] = [];
   const flatErrs: number[] = [];
+  const predMcaps: number[] = [];
+  const flatMcaps: number[] = [];
+  const actualMcaps: number[] = [];
   peers.forEach((p, i) => {
     const others = peers.filter((_, j) => j !== i);
-    const globalEx = median(others.map((q) => q.mcap_usd! / q.tvl_usd));
+    const globalEx = medianLog(others.map((q) => q.mcap_usd! / q.tvl_usd));
     const catOthers = others.filter((q) => categoryKey(q) === categoryKey(p));
+    const usable =
+      catOthers.length >= 2 ||
+      (catOthers.length === 1 &&
+        catOthers[0]!.tvl_usd >= snapshot.floor_usd &&
+        Math.abs(bandIndex(catOthers[0]!.tvl_usd) - bandIndex(p.tvl_usd)) <= 1);
     let pred: number;
-    if (catOthers.length >= MODEL.min_peers) {
-      const rawMed = median(catOthers.map((q) => q.mcap_usd! / q.tvl_usd));
+    if (usable) {
+      const rawMed = medianLog(catOthers.map((q) => q.mcap_usd! / q.tvl_usd));
       pred = clamp(
         Math.exp((catOthers.length * Math.log(rawMed) + cal.shrinkage_k * Math.log(globalEx)) / (catOthers.length + cal.shrinkage_k)),
         MODEL.multiple_floor,
         MODEL.multiple_cap,
       );
     } else {
-      const band = TVL_BANDS.find((b) => p.tvl_usd >= b.lo && p.tvl_usd < b.hi) ?? TVL_BANDS[TVL_BANDS.length - 1]!;
+      const band = TVL_BANDS[bandIndex(p.tvl_usd)]!;
       let bandPeers = others.filter((q) => q.tvl_usd >= band.lo && q.tvl_usd < band.hi);
       if (bandPeers.length < 5) {
         bandPeers = [...others]
           .sort((a, b) => Math.abs(Math.log(a.tvl_usd / p.tvl_usd)) - Math.abs(Math.log(b.tvl_usd / p.tvl_usd)) || (a.slug < b.slug ? -1 : 1))
           .slice(0, 15);
       }
-      const bandMed = median(bandPeers.map((q) => q.mcap_usd! / q.tvl_usd));
-      pred = clamp((globalEx + bandMed) / 2, MODEL.multiple_floor, MODEL.multiple_cap);
+      const bandMed = medianLog(bandPeers.map((q) => q.mcap_usd! / q.tvl_usd));
+      pred = clamp(Math.sqrt(globalEx * bandMed), MODEL.multiple_floor, MODEL.multiple_cap);
     }
     const actual = p.mcap_usd! / p.tvl_usd;
     modelErrs.push(Math.abs(Math.log(pred / actual)));
     flatErrs.push(Math.abs(Math.log(globalEx / actual)));
+    predMcaps.push(pred * p.tvl_usd);
+    flatMcaps.push(globalEx * p.tvl_usd);
+    actualMcaps.push(p.mcap_usd!);
   });
   const within2x = (errs: number[]): number => Math.round((100 * errs.filter((e) => e < Math.log(2)).length) / Math.max(1, errs.length));
   const spearman = pearson(
@@ -831,6 +942,8 @@ export function validateModel(snapshot: Snapshot, cal: Calibration, board: Board
     loo_flat_median_abs_log_err: round2(median(flatErrs)),
     loo_model_within_2x_pct: within2x(modelErrs),
     loo_flat_within_2x_pct: within2x(flatErrs),
+    loo_model_rank_ic: round2(pearson(ranksOf(predMcaps), ranksOf(actualMcaps))),
+    loo_flat_rank_ic: round2(pearson(ranksOf(flatMcaps), ranksOf(actualMcaps))),
     spearman_implied_vs_tvl: round2(spearman),
     k_alt: 6,
     k_alt_top10_overlap: top10Overlap,
@@ -863,7 +976,16 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
 
   const rows: RadarRow[] = board.map((r) => {
     const verify = verifyOf(r.name, r.slug);
-    const flags = verify ? [...r.model.risk_flags, 'verify token status'] : r.model.risk_flags;
+    const manual = MANUAL_REVIEW[r.slug] ?? null;
+    let flags = r.model.risk_flags;
+    if (verify) flags = [...flags, 'verify token status'];
+    if (manual !== null) flags = [...flags, 'manual review'];
+    const crossCheck =
+      playbookFor(r.category) === 'curator' ? Math.round(r.tvl_usd * MODEL.curator_take_rate * MODEL.curator_revenue_multiple) : null;
+    const agreePct =
+      crossCheck !== null && r.model.fallback_multiple && r.model.multiple > 0
+        ? Math.round(10 * Math.abs(crossCheck / r.tvl_usd / r.model.multiple - 1) * 100) / 10
+        : null;
     return {
       rank: r.rank,
       slug: r.slug,
@@ -887,8 +1009,9 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       scale_multiplier: r.model.scale_multiplier,
       p_launch: r.model.p_launch,
       ev_usd: Math.round((r.implied_value_usd * r.model.p_launch) / 100),
-      cross_check_usd:
-        playbookFor(r.category) === 'curator' ? Math.round(r.tvl_usd * MODEL.curator_take_rate * MODEL.curator_revenue_multiple) : null,
+      cross_check_usd: crossCheck,
+      cross_check_agree_pct: agreePct,
+      manual_review: manual,
       verify_token: verify,
       risk: riskLevel(flags),
       risk_flags: flags,
@@ -924,6 +1047,9 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
     screened_exchange_name: cal.screened_exchange_name,
     screened_version: cal.screened_version,
     screened_by_category: cal.screened_by_category,
+    peers_raw: cal.peers_raw,
+    peers_deduped: cal.peers_deduped,
+    peers_used: cal.peers_used,
     bands: cal.bands,
     validation,
     categories,

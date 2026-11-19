@@ -6,7 +6,7 @@
 
 A make.fun **token-radar-01** entry: a radar that ranks pre-token protocols by the value their
 token would carry if it launched on the snapshot's own record, and gives every row a concrete
-farm plan. Model **radar-2.3**.
+farm plan. Model **radar-2.4**.
 
 ## Run it
 

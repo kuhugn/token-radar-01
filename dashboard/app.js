@@ -28,32 +28,29 @@
   };
 
   var star = '<svg class="star" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-label="watchlist"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.2 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg>';
-  // A row's range spark: the implied value's floor and ceiling when relative growth runs to its
-  // clamps, on a log scale, with the base value marked. Drawn only from the row's own figures.
-  function spark(r) {
-    var lo = Math.log(r.implied_floor), hi = Math.log(r.implied_ceiling), v = Math.log(r.implied_value_usd);
-    var pos = hi > lo ? ((v - lo) / (hi - lo)) * 76 + 2 : 40;
-    return '<svg class="spark" width="80" height="14" viewBox="0 0 80 14" role="img" aria-label="implied range ' + usd(r.implied_floor) + ' to ' + usd(r.implied_ceiling) + '">' +
-      '<rect x="2" y="5" width="76" height="4" rx="2" fill="#27395c"/><circle cx="' + pos.toFixed(1) + '" cy="7" r="3.4" fill="#2dd4bf"/></svg>';
-  }
-
   function header() {
     var screened = D.screened_category + D.screened_product_name + D.screened_exchange_name + D.screened_version;
+    var v = D.validation;
+    var rc = D.scatter.top_categories.filter(function (t) { return t.category === 'Risk Curators'; })[0];
     return '<header class="top"><div class="brand"><h1>Token Launch <span class="rad">Radar</span></h1>' +
       '<p>Pre-token protocols ranked by the value their token would carry if it launched on today\'s record. ' +
       'Model <b>' + esc(D.model_version) + '</b> calibrates itself on this snapshot\'s own tokenised protocols; protocols whose token already trades sit in Live, never in the ranking.</p>' +
+      '<p class="thesis">Risk Curators hold <b>' + (rc ? rc.board_tvl_share_pct.toFixed(1) : '0') + '% of the board\'s TVL</b> and are priced by a fallback — their only priced peer is an oracle token that cannot speak for them, and every such row is flagged. ' +
+      'This is a sizing tool, not a price target: every value carries its range, and the range is a scenario, not a confidence interval.</p>' +
       '<p class="funnel">' + D.total_protocols + ' tracked &rarr; ' + D.tokenised + ' record a token (top ' + D.live_size + ' by market cap in Live) &rarr; ' + D.pre_token + ' pre-token &rarr; ' + screened + ' set aside by the screen &rarr; <b>' + D.board_size + ' ranked</b></p></div>' +
       '<div class="stats">' +
+      '<div class="stat"><b>' + D.total_protocols + '</b><span>in the snapshot</span></div>' +
+      '<div class="stat"><b>' + D.tokenised + '</b><span>hold a token</span><small>' + D.peers_raw + ' priced · ' + (D.tokenised - D.peers_raw) + ' no price</small></div>' +
       '<div class="stat"><b>' + D.board_size + '</b><span>ranked</span></div>' +
-      '<div class="stat"><b>' + usd(D.watchlist_implied) + '</b><span>watchlist implied</span></div>' +
-      '<div class="stat"><b>' + usd(D.median_implied) + '</b><span>median implied</span></div>' +
-      '<div class="stat"><b>' + D.global_median.toFixed(3) + '</b><span>median mcap/TVL</span></div>' +
-      '</div></header>';
+      '<div class="stat"><b>' + screened + '</b><span>set aside by the screen</span></div>' +
+      '<div class="stat"><b>' + D.unaccounted + '</b><span>unaccounted</span></div>' +
+      '</div>' +
+      '<p class="calline">Calibration: ' + D.peers_raw + ' priced peers &minus; ' + (D.peers_raw - D.peers_used) + ' set aside as non-comparable = <b>' + D.peers_used + ' comps</b> · top-10 holds ' + v.k_alt_top10_overlap + '/10 when shrinkage k is forced to ' + v.k_alt + ' · every row carries a range · snapshot ' + esc(D.as_of) + ' · sha256 ' + esc(D.snapshot_sha256.slice(0, 12)) + '&hellip;</p></header>';
   }
 
   function tabs() {
     function b(id, label) { return '<button data-tab="' + id + '"' + (state.tab === id ? ' class="on"' : '') + '>' + label + '</button>'; }
-    return '<nav class="tabs">' + b('board', 'Board') + b('live', 'Live tokens') + b('method', 'Methodology') + '</nav>';
+    return '<nav class="tabs">' + b('board', 'Board') + b('calib', 'Calibration') + b('live', 'Live tokens') + b('method', 'Methodology') + '</nav>';
   }
 
   function filtered() {
@@ -103,21 +100,14 @@
       return '<th class="sortable ' + (cls || '') + '" data-sort="' + id + '">' + label + arrow + '</th>';
     }
     var body = rows.map(function (r) {
-      var chg = r.change_7d === null ? '<span class="dim">n/a</span>' : '<span class="' + (r.change_7d >= 0 ? 'up' : 'down') + '">' + pct(r.change_7d) + '</span>';
       return '<tr data-slug="' + esc(r.slug) + '"' + (state.sel === r.slug ? ' class="sel"' : '') + '>' +
         '<td class="rank num">' + r.rank + '</td>' +
         '<td class="proto l"><span class="nm">' + esc(r.name) + '</span>' + (r.watchlist ? star : '') + '<span class="sl">' + esc(r.slug) + '</span></td>' +
         '<td class="l"><span class="cat">' + esc(r.category || 'Uncategorised') + '</span></td>' +
-        '<td class="num">' + r.chains.length + '</td>' +
         '<td class="num">' + usd(r.tvl_usd) + '</td>' +
-        '<td class="num">' + chg + '</td>' +
-        '<td class="num">' + age(r.age_days) + '</td>' +
         '<td class="num">' + r.multiple.toFixed(2) + '&times;</td>' +
-        '<td class="num"><span class="pbar"><i style="width:' + r.p_launch + '%"></i></span>' + r.p_launch + '</td>' +
-        '<td class="l"><span title="Implied range ' + usd(r.implied_floor) + ' to ' + usd(r.implied_ceiling) + '">' + spark(r) + '</span></td>' +
         '<td class="num imp">' + usd(r.implied_value_usd) + '</td>' +
-        '<td class="num ev">' + usd(r.ev_usd) + '</td>' +
-        '<td class="l">' + (r.risk === 'high' ? '<span class="badge hi">HIGH</span>' : '') + '</td></tr>';
+        '<td class="num ev">' + usd(r.ev_usd) + '</td></tr>';
     }).join('');
     return '<div class="toolbar">' +
       '<input id="q" type="search" placeholder="Search name or slug" value="' + esc(state.q) + '">' +
@@ -126,11 +116,11 @@
       '<select id="tvl">' + tvlOpts + '</select>' +
       '<label class="chk"><input type="checkbox" id="wl"' + (state.wl ? ' checked' : '') + '> Watchlist only</label>' +
       '<span class="count">' + rows.length + ' of ' + D.board_size + ' protocols · click a row for its farm plan</span>' +
-      '<span class="legend">Range = the plausible implied band: for fallback rows it spans the TVL-band and global multiples, for peer-backed rows relative growth at its &plusmn;30pp clamps. EV = implied &times; launch priority — what to farm first, not what it is worth.</span></div>' +
+      '<span class="legend">EV = implied &times; launch priority — what to farm first, not what it is worth. Click a row for its full build-up, its range, and its farm plan with the break-even solved.</span></div>' +
       '<div class="wrap"><table><thead><tr>' +
-      th('rank', '#') + th('name', 'Protocol', 'l') + '<th class="l">Category</th><th>Chains</th>' +
-      th('tvl', 'TVL') + th('chg', '7d') + th('age', 'Age') + th('mult', 'Mult') + th('p', 'Launch') + '<th class="l">Range</th>' +
-      th('imp', 'Implied value') + th('ev', 'EV') + '<th class="l">Risk</th>' +
+      th('rank', '#') + th('name', 'Protocol', 'l') + '<th class="l">Category</th>' +
+      th('tvl', 'TVL') + th('mult', 'Mult') +
+      th('imp', 'Implied value') + th('ev', 'EV') +
       '</tr></thead><tbody>' + body + '</tbody></table></div>';
   }
 
@@ -155,6 +145,20 @@
     var flags = r.risk_flags.length
       ? r.risk_flags.map(function (f) { return '<span class="flag">' + esc(f) + '</span>'; }).join('')
       : '<span class="flag ok">no model flags</span>';
+    var eco = '<h3 class="sec">Farm economics — the break-even, solved</h3><table class="wf">' +
+      '<tr><td class="l">Planned position (sized from TVL, capped at $2,500)</td><td class="num">' + usd(r.farm_cap_usd) + '</td></tr>' +
+      '<tr><td class="l">Gas over the ' + r.farm_hold_days + '-day hold (the plan\'s fixed cost)</td><td class="num">' + usd(r.farm_gas_usd) + '</td></tr>' +
+      '<tr><td class="l">Expected airdrop rate — (implied / TVL) &times; 10% float &times; launch priority</td><td class="num">' + (r.farm_airdrop_rate * 100).toFixed(2) + '% of position</td></tr>' +
+      '<tr><td class="l">Yield forgone over the hold — the same USDC lent at 4%</td><td class="num">' + (r.farm_yield_rate * 100).toFixed(2) + '% of position</td></tr>' +
+      (r.break_even_usd !== null
+        ? '<tr class="tot"><td class="l">Break-even position — gas / (airdrop rate &minus; yield rate)</td><td class="num">' + usd(r.break_even_usd) + '</td></tr>'
+        : '<tr class="tot"><td class="l">Break-even position</td><td class="num">none at any size</td></tr>') +
+      '</table>' +
+      (r.break_even_usd === null
+        ? '<p class="mut">The expected airdrop rate is below what the same USDC earns by simply lending it — every extra dollar loses the difference over the hold, before gas. At this bankroll the plan is a paid ticket, not an investment; the board says so here rather than hiding it in the plan\'s prose.</p>'
+        : r.break_even_usd > r.farm_cap_usd
+          ? '<p class="mut">The plan only pays for itself from a position of about ' + usd(r.break_even_usd) + '; the planned ' + usd(r.farm_cap_usd) + ' does not reach it. Skip at this bankroll, or size up knowingly.</p>'
+          : '<p class="mut">The planned position is past break-even: from about ' + usd(r.break_even_usd) + ' the expected airdrop covers the plan\'s own gas and forgone yield.</p>');
     return '<h2>' + esc(r.name) + (r.watchlist ? star : '') + '</h2><div class="sub">' + esc(r.slug) + ' · rank #' + r.rank + ' of ' + D.board_size + (r.watchlist ? ' · on the snapshot watchlist' : ' · early, below the watchlist floor') + '</div>' +
       '<div class="kv">' +
       '<div><span>Implied value</span><b>' + usd(r.implied_value_usd) + '</b></div>' +
@@ -165,9 +169,79 @@
       '<h3 class="sec">Model flags</h3><div class="flags">' + flags + '</div>' +
       (r.verify_token ? '<p class="mut">One word of this protocol\'s name is a live token\'s symbol in the same snapshot — the screen cannot prove whether it already trades under that name. Verify before farming.</p>' : '') +
       (r.manual_review ? '<p class="mut"><b>Manual review.</b> ' + esc(r.manual_review) + '</p>' : '') +
+      eco +
       '<h3 class="sec">Chains</h3><p class="mut">' + esc(r.chains.join(', ') || 'none recorded') + '</p>' +
       '<h3 class="sec">Farm plan</h3><ol class="farm">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
       '<p class="dim">The launch-priority score never affects rank: rank is implied value alone. The plan is generated from this protocol\'s category, TVL, age and first chain — the same playbook code scores every row.</p>';
+  }
+
+  function calibView() {
+    var S = D.scatter, v = D.validation;
+    var palette = ['#2dd4bf', '#f5b94b', '#818cf8', '#f472b6', '#3ecf8e', '#60a5fa', '#facc15', '#fb7185'];
+    var colorOf = {};
+    S.top_categories.forEach(function (t, i) { colorOf[t.category] = palette[i % palette.length]; });
+    var gm = D.global_median;
+    var envF = Math.exp(v.loo_model_median_abs_log_err);
+    var X0 = 64, X1 = 1180, Y0 = 24, Y1 = 415;
+    var LX = [6.3, 10.7], LY = [-3, 1];
+    function X(tvl) { return X0 + ((Math.log10(tvl) - LX[0]) / (LX[1] - LX[0])) * (X1 - X0); }
+    function Y(m) { return Y0 + ((LY[1] - Math.log10(m)) / (LY[1] - LY[0])) * (Y1 - Y0); }
+    var svg = '';
+    // leave-one-out error envelope around the global median
+    svg += '<rect x="' + X0 + '" y="' + Y(gm * envF).toFixed(1) + '" width="' + (X1 - X0) + '" height="' + (Y(gm / envF) - Y(gm * envF)).toFixed(1) + '" fill="#2dd4bf" opacity="0.07"/>';
+    // gridlines
+    [[7, '$10M'], [8, '$100M'], [9, '$1B'], [10, '$10B']].forEach(function (t) {
+      svg += '<line x1="' + X(Math.pow(10, t[0])).toFixed(1) + '" y1="' + Y0 + '" x2="' + X(Math.pow(10, t[0])).toFixed(1) + '" y2="' + Y1 + '" stroke="#1d2c47" stroke-width="1"/>' +
+        '<text x="' + X(Math.pow(10, t[0])).toFixed(1) + '" y="' + (Y1 + 20) + '" class="svgt" text-anchor="middle">' + t[1] + '</text>';
+    });
+    [[-2, '0.01'], [-1, '0.1'], [0, '1'], [1, '10']].forEach(function (t) {
+      svg += '<line x1="' + X0 + '" y1="' + Y(Math.pow(10, t[0])).toFixed(1) + '" x2="' + X1 + '" y2="' + Y(Math.pow(10, t[0])).toFixed(1) + '" stroke="#1d2c47" stroke-width="1"/>' +
+        '<text x="' + (X0 - 8) + '" y="' + (Y(Math.pow(10, t[0])) + 4).toFixed(1) + '" class="svgt" text-anchor="end">' + t[1] + '</text>';
+    });
+    // global median, dashed
+    svg += '<line x1="' + X0 + '" y1="' + Y(gm).toFixed(1) + '" x2="' + X1 + '" y2="' + Y(gm).toFixed(1) + '" stroke="#f5b94b" stroke-width="1.4" stroke-dasharray="6 5"/>' +
+      '<text x="' + (X1 - 4) + '" y="' + (Y(gm) - 8).toFixed(1) + '" class="svgt" text-anchor="end" fill="#f5b94b">global median ' + gm.toFixed(3) + '&times;</text>' +
+      '<text x="' + (X0 + 6) + '" y="' + (Y(gm * envF) + 16).toFixed(1) + '" class="svgt">leave-one-out error envelope (&divide;/&times;' + envF.toFixed(2) + ')</text>';
+    // category segments — the model itself: one flat shrunk median per category, drawn only
+    // across the TVL span that category's own priced peers cover. Fallback categories have
+    // no segment: no category median prices them.
+    var labelled = S.segments.filter(function (s) { return !s.fallback; }).sort(function (a, b) { return b.peers - a.peers; });
+    S.segments.forEach(function (s) {
+      if (s.fallback) return;
+      var xa = X(s.tvl_lo), xb = X(s.tvl_hi);
+      if (xb - xa < 16) { var mid = (xa + xb) / 2; xa = mid - 8; xb = mid + 8; }
+      svg += '<line x1="' + xa.toFixed(1) + '" y1="' + Y(s.multiple).toFixed(1) + '" x2="' + xb.toFixed(1) + '" y2="' + Y(s.multiple).toFixed(1) + '" stroke="' + (colorOf[s.category] || '#7d90b0') + '" stroke-width="3" stroke-linecap="round" opacity="0.9"/>';
+    });
+    labelled.slice(0, 1).forEach(function (s) {
+      svg += '<text x="' + (X(s.tvl_hi) + 8).toFixed(1) + '" y="' + (Y(s.multiple) + 4).toFixed(1) + '" class="svgt" fill="' + (colorOf[s.category] || '#7d90b0') + '">' + esc(s.category) + ' ' + s.multiple.toFixed(3) + '&times;</text>';
+    });
+    // the peers themselves
+    S.peers.forEach(function (p) {
+      svg += '<circle cx="' + X(p.tvl_usd).toFixed(1) + '" cy="' + Y(p.multiple).toFixed(1) + '" r="2.6" fill="' + (colorOf[p.category || ''] || '#64748B') + '" opacity="0.9"><title>' + esc(p.name) + ' — ' + p.multiple.toFixed(3) + '&times; on ' + usd(p.tvl_usd) + '</title></circle>';
+    });
+    // annotate the extremes and the peer nearest the median
+    var byMult = [...S.peers].sort(function (a, b) { return a.multiple - b.multiple; });
+    var nearGm = S.peers.reduce(function (best, p) { return Math.abs(Math.log(p.multiple / gm)) < Math.abs(Math.log(best.multiple / gm)) ? p : best; }, S.peers[0]);
+    [{ p: byMult[0], dy: -8 }, { p: byMult[byMult.length - 1], dy: -8 }, { p: nearGm, dy: 20 }].forEach(function (a) {
+      var p = a.p;
+      if (!p) return;
+      var cx = X(p.tvl_usd), cy = Y(p.multiple);
+      var anchor = cx > X1 - 260 ? 'end' : 'start';
+      var tx = anchor === 'end' ? cx - 8 : cx + 8;
+      svg += '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="4.4" fill="none" stroke="#dce6f2" stroke-width="1.2"/>' +
+        '<text x="' + tx.toFixed(1) + '" y="' + (cy + a.dy).toFixed(1) + '" class="svgt" text-anchor="' + anchor + '" fill="#dce6f2">' + esc(p.slug) + ' ' + p.multiple.toFixed(3) + '&times;</text>';
+    });
+    svg += '<text x="' + X0 + '" y="' + (Y1 + 42) + '" class="svgt">protocol TVL (log scale)</text>' +
+      '<text x="' + (X1 - 4) + '" y="' + (Y1 + 42) + '" class="svgt" text-anchor="end">realised market cap / TVL (log scale)</text>';
+    var legend = S.top_categories.map(function (t) {
+      return '<span class="lgchip"><i style="background:' + colorOf[t.category] + '"></i>' + esc(t.category) + ' · ' + t.board_tvl_share_pct.toFixed(1) + '% of board TVL</span>';
+    }).join('');
+    var shareSum = S.top_categories.reduce(function (a, t) { return a + t.board_tvl_share_pct; }, 0);
+    return '<div class="panelbox"><h2>Calibration — the model\'s evidence, plotted</h2>' +
+      '<p>Every priced peer the model calibrates on: what a tokenised protocol of this size actually trades at. The model is the horizontal segments — one shrunk category median each, drawn only over the TVL span that category\'s own peers cover; fallback categories have no segment, because no category median prices them. A size term was fitted and left out (Methodology has the test) — the segments are flat because the model is.</p>' +
+      '<div class="lgrow">' + legend + '</div>' +
+      '<svg class="calib" viewBox="0 0 1200 475" role="img" aria-label="Scatter of ' + S.peers.length + ' priced peers, realised multiple against TVL, with category median segments">' + svg + '</svg>' +
+      '<p>' + S.peers.length + ' cleaned priced peers; the eight coloured categories hold ' + shareSum.toFixed(0) + '% of the board\'s TVL, the rest are grey. The vertical spread — ' + byMult[0].multiple.toFixed(3) + '&times; to ' + byMult[byMult.length - 1].multiple.toFixed(3) + '&times; — is why every implied value on the board ships with a range instead of pretending to be a point.</p></div>';
   }
 
   function liveView() {
@@ -218,16 +292,20 @@
       '<p><b>Relative growth.</b> 1 + 0.50 x clamp(7d change minus the category\'s median 7d change, -30pp, +30pp) / 100 — momentum is scored against the protocol\'s own category, never raw: in a week when the whole field fell, holding flat is strength. A missing change scores as the category median.</p>' +
       '<p><b>Maturity.</b> 0.70 to 0.85 over the first 90 days without a token, then 0.85 to 1.00 on a log scale to 1095 days; an unknown listing date scores as 180 days and is flagged. <b>Breadth.</b> +3% for a second chain, +2% a third, +1% each a fourth and fifth. <b>Scale.</b> (TVL / $1B)^-0.10, clamped to [0.85, 1.00] — a smooth size discount with no cliff: $999M and $1.001B score alike, $2.75B keeps about x0.90.</p>' +
       '<p><b>Launch priority (display only).</b> The category\'s tokenisation rate scaled by an age-overdue curve peaking at 400-1000 days without a token. It orders nobody: rank is implied value alone, so the board\'s implied values never rise with rank. The EV column (implied x priority) answers the other question — what to farm first — without touching the ranking.</p>' +
-      '<p><b>Farm plans.</b> Every plan uses a seasoned wallet (a fresh wallet is the first filter serious airdrops run), sizes the position from the protocol\'s own TVL — $40 per square root of TVL in millions, floored at $150 and capped at $2,500, 5% of a $50,000 reference bankroll — and states its expected value out loud: position x (implied / TVL) x a 10% community float, weighted by launch priority, with capital separated from gas, time and the lending yield forgone at 4%. Thin numbers are printed, not hidden.</p></div>' +
+      '<p><b>Farm plans.</b> Every plan uses a seasoned wallet (a fresh wallet is the first filter serious airdrops run), sizes the position from the protocol\'s own TVL — $40 per square root of TVL in millions, floored at $150 and capped at $2,500, 5% of a $50,000 reference bankroll — and states its expected value out loud: position x (implied / TVL) x a 10% community float, weighted by launch priority, with capital separated from gas, time and the lending yield forgone at 4%. Thin numbers are printed, not hidden. Every drawer also solves the plan\'s break-even in closed form — gas / (airdrop rate &minus; yield rate), with both rates printed beside it — and where the airdrop rate does not beat the yield forgone, it says no position breaks even. One caveat on that algebra: it assumes the airdrop scales linearly with position, while real allocations are usually capped per wallet, which makes the return concave — a cap can only make a large position worse, never rescue a negative rate.</p></div>' +
       '<div class="panelbox"><h2>How the model grades itself</h2>' +
       '<p><b>What the ranking can and cannot claim.</b> The board\'s order is largely TVL\'s order — Spearman correlation with raw TVL is <b>' + v.spearman_implied_vs_tvl.toFixed(2) + '</b> — and in the backtest below, the model\'s rank correlation with realised market caps (' + v.loo_model_rank_ic.toFixed(2) + ') ties the flat global median\'s (' + v.loo_flat_rank_ic.toFixed(2) + '). What the model adds is not a better order but calibration: what a dollar of this category\'s TVL has historically been worth, stated as a level with a range, instead of size alone.</p>' +
       '<p><b>Leave-one-out backtest — the error scale.</b> Each of the ' + v.loo_peers + ' cleaned priced peers was hidden in turn and its multiple predicted by the model\'s own rules (the corroboration rule, or the geometric TVL-band fallback). Median absolute log error: <b>' + v.loo_model_median_abs_log_err.toFixed(2) + '</b> for the model against <b>' + v.loo_flat_median_abs_log_err.toFixed(2) + '</b> for the flat global median — a typical miss of about x' + Math.exp(v.loo_model_median_abs_log_err).toFixed(1) + ' either way, and the model is the better central estimate. The scale is stated on the cleaned set because ' + (D.peers_raw - D.peers_used) + ' of the raw benchmark rows fail the peer screen above; grading against them would grade the noise. On the share predicted within 2x the flat median still leads, ' + v.loo_flat_within_2x_pct + '% to ' + v.loo_model_within_2x_pct + '% — no TVL-only model pins a launch value tightly, and this one does not pretend to.</p>' +
+      '<p><b>Is the edge real?</b> A paired bootstrap over the same ' + v.loo_peers + ' folds (' + v.loo_bootstrap_resamples.toLocaleString('en-US') + ' resamples) puts the difference of medians at ' + v.loo_median_diff.toFixed(2) + ' log units, with a 95% interval of [' + v.loo_median_diff_ci_lo.toFixed(2) + ', ' + v.loo_median_diff_ci_hi.toFixed(2) + '] — it includes zero — and on mean error the two are indistinguishable (' + v.loo_mean_diff.toFixed(2) + ', interval [' + v.loo_mean_diff_ci_lo.toFixed(2) + ', ' + v.loo_mean_diff_ci_hi.toFixed(2) + ']). So the honest claim is narrow: the model is the better central estimate on the median peer, not a proven one. That is why every row carries a range and a risk flag instead of a point estimate.</p>' +
+      '<p><b>A size term, fitted and not shipped.</b> Pooling the peers with category fixed effects gives a size elasticity of ' + v.slope_b.toFixed(2) + ' (95% interval [' + v.slope_b_ci_lo.toFixed(2) + ', ' + v.slope_b_ci_hi.toFixed(2) + ']): within a category, larger protocols do trade at lower multiples. Tested leave-one-out with the slope refit on every fold, it cuts the median miss from &times;' + Math.exp(v.loo_model_median_abs_log_err).toFixed(1) + ' to &times;' + Math.exp(v.slope_loo_median_abs_log_err).toFixed(1) + ' — but the share within 2x falls from ' + v.loo_model_within_2x_pct + '% to ' + v.slope_loo_within_2x_pct + '%: a sharper centre bought with a fatter tail, from a coefficient whose own interval spans a ' + Math.pow(10, v.slope_b_ci_lo).toFixed(2) + '&times; to ' + Math.pow(10, v.slope_b_ci_hi).toFixed(2) + '&times; correction across a 10&times; size gap. A sizing tool does not make that trade. Category medians carry the model; the slope stays out, and this paragraph is its receipt.</p>' +
       '<p><b>The range is a scenario band, not a confidence interval.</b> For a peer-backed row it is the headline with relative growth run to its &plusmn;30pp clamps; for a fallback row it spans the two medians the midpoint came from. It shows what the value becomes if momentum, or the multiple, moves to the stated edges — it does not claim the realised value lands inside it with any stated probability.</p>' +
       '<p><b>Shrinkage stability.</b> Forcing k from the estimated ' + D.shrinkage_k + ' up to ' + v.k_alt + ' keeps ' + v.k_alt_top10_overlap + ' of the top 10 in the top 10 and moves no top-20 row by more than ' + v.k_alt_max_rank_delta_top20 + ' places — the board\'s head does not hinge on the exact k, though its shoulders move, which is what the ranges are for.</p></div>' +
       '<div class="panelbox"><h2>Category calibration</h2><div class="wrap" style="border:0"><table><thead><tr><th class="l">Category</th><th>Tokenised peers</th><th>Raw median</th><th>Multiple used</th><th>Tokenised / all</th><th>Median 7d</th></tr></thead><tbody>' + cats + '</tbody></table></div>' +
       '<h2 style="margin-top:18px">TVL bands — the fallback\'s second leg</h2><div class="wrap" style="border:0"><table><thead><tr><th class="l">Peer TVL band</th><th>Priced peers</th><th>Median multiple</th></tr></thead><tbody>' + bands + '</tbody></table></div></div>' +
       '<div class="panelbox"><h2>Coverage and the screen</h2>' +
       '<p>The snapshot holds ' + D.total_protocols + ' protocols: ' + D.tokenised + ' record a token and ' + D.pre_token + ' record none. Of the pre-token set, ' + screened + ' are set aside by the genuineness screen the watchlist itself uses, leaving the ' + D.board_size + ' ranked rows — every one of the ' + D.watchlist_size + ' watchlist protocols among them and ' + D.early_size + ' early rows below the $' + (D.floor_usd / 1e6) + 'M floor. The set-asides, auditable:</p>' +
+      '<div class="covbar"><div class="covseg" style="width:' + (100 * D.tokenised / D.total_protocols).toFixed(1) + '%;background:#27395c">hold a token · ' + D.tokenised + '</div><div class="covseg" style="width:' + (100 * D.board_size / D.total_protocols).toFixed(1) + '%;background:#0f3d38;color:#2dd4bf">ranked · ' + D.board_size + '</div><div class="covseg" style="width:' + (100 * screened / D.total_protocols).toFixed(1) + '%;background:#3a2c10;color:#f5b94b">set aside · ' + screened + '</div></div>' +
+      '<p class="dim">' + D.total_protocols + ' of ' + D.total_protocols + ' accounted for — the three segments sum to the whole snapshot; nothing is dropped silently.</p>' +
       '<div class="wrap" style="border:0"><table><thead><tr><th class="l">Screen reason</th><th>Set aside</th></tr></thead><tbody>' + excl + '</tbody></table></div>' +
       '<p>The board\'s implied values sum to ' + usd(D.total_implied) + ', printed here once and deliberately not a headline: the sum double-counts, because one protocol\'s TVL is often deposits inside another (a curator\'s assets sit in lending markets that are themselves in the snapshot). The headline aggregates are the watchlist\'s implied (' + usd(D.watchlist_implied) + ') and the board\'s median (' + usd(D.median_implied) + '), which no overlap can inflate.</p>' +
       '<p><b>One limit, stated.</b> The screen reads only the snapshot\'s fields. A protocol whose token trades but which the snapshot records with no market cap, symbol or CoinGecko id is indistinguishable from a true pre-token protocol in this data. As a partial check, every board row\'s name was cross-read against the live tokens\' symbols: ' + verifyCount + ' rows carry a word that is a live token\'s symbol and are flagged "verify token status" rather than silently trusted or silently removed.</p>' +
@@ -238,9 +316,10 @@
   function render() {
     var html = header() + tabs();
     if (state.tab === 'board') html += boardView();
+    else if (state.tab === 'calib') html += calibView();
     else if (state.tab === 'live') html += liveView();
     else html += methodView();
-    html += '<footer>Implied values are this radar\'s own claim from the snapshot\'s record, not a prediction that a token will launch. Farm plans are checklists, not financial advice.</footer>';
+    html += '<footer>Implied values are this radar\'s own claim from the snapshot\'s record, not a prediction that a token will launch. Farm plans are checklists, not financial advice.<br>Snapshot ' + esc(D.as_of) + ' · sha256 ' + esc(D.snapshot_sha256.slice(0, 16)) + '&hellip; · ' + D.board_size + ' ranked rows · implied values sum to ' + usd(D.total_implied) + ' (nested TVL double-counts — see Methodology) · model ' + esc(D.model_version) + '.</footer>';
     var sel = state.sel ? D.rows.filter(function (r) { return r.slug === state.sel; })[0] : null;
     html += '<div class="scrim' + (sel ? ' on' : '') + '" id="scrim"></div><aside class="detail' + (sel ? ' on' : '') + '" id="detail">' +
       (sel ? '<button class="x" id="x" aria-label="Close">×</button>' + detail(sel) : '') + '</aside>';

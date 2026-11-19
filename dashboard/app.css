@@ -29,6 +29,10 @@ header.top{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;justify-con
 .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;min-width:104px}
 .stat b{display:block;font-family:var(--mono);font-size:16px;font-weight:600}
 .stat span{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px}
+.stat small{display:block;color:var(--dim);font-size:10.5px;margin-top:2px;font-family:var(--mono)}
+.thesis b{color:var(--ink)}
+.calline{flex-basis:100%;color:var(--dim);font-size:12.5px;margin:0}
+.calline b{color:var(--ink)}
 
 /* tabs + toolbar */
 nav.tabs{display:flex;gap:6px;margin:16px 0 10px}
@@ -48,7 +52,7 @@ td.ev{color:var(--mut)}
 
 /* board table */
 .wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
-table{border-collapse:separate;border-spacing:0;width:100%;min-width:1180px}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:900px}
 thead th{position:sticky;top:0;background:var(--panel2);color:#8a93a8;font-size:11px;text-transform:uppercase;letter-spacing:.6px;text-align:right;padding:9px 10px;border-bottom:1px solid var(--line2);white-space:nowrap;z-index:2}
 thead th.l,tbody td.l{text-align:left}
 thead th.sortable{cursor:pointer} thead th.sortable:hover{color:var(--teal)}
@@ -96,6 +100,13 @@ ol.farm{margin:0;padding-left:19px} ol.farm li{margin:0 0 9px;color:var(--ink)}
 .mbar .track{flex:1;height:8px;background:var(--panel2);border-radius:4px;position:relative;min-width:120px}
 .mbar .fill{position:absolute;left:0;top:0;bottom:0;background:var(--teal);border-radius:4px}
 .mbar .med{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--risk-md)}
+.covbar{display:flex;height:26px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:10px 0 6px}
+.covseg{display:flex;align-items:center;justify-content:center;font:600 11.5px var(--sans);color:var(--mut);white-space:nowrap;overflow:hidden;padding:0 6px}
+.lgrow{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.lgchip{display:inline-flex;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:2px 9px;font-size:11.5px;color:var(--mut)}
+.lgchip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+svg.calib{width:100%;height:auto;display:block}
+.svgt{font:11px var(--mono);fill:var(--mut)}
 code{font-family:var(--mono);background:var(--panel2);border-radius:5px;padding:1px 5px;font-size:12.5px}
 .formula{font-family:var(--mono);font-size:13px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow-x:auto;white-space:nowrap}
 footer{color:var(--dim);font-size:12px;margin-top:18px;border-top:1px solid var(--line);padding-top:10px}

@@ -1,4 +1,4 @@
-// Token Launch Radar — model radar-2.3.
+// Token Launch Radar — model radar-2.4.
 //
 // One sealed DefiLlama snapshot in, one ranked board of pre-token protocols out. Every figure on the
 // board is derived from the snapshot's own ten fields per protocol; no protocol name is ever
@@ -86,7 +86,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-2.3';
+export const MODEL_VERSION = 'radar-2.4';
 
 /** The model's constants, stated on the dashboard's Methodology view. */
 export const MODEL = {
@@ -694,6 +694,12 @@ export interface RadarRow {
   scale_multiplier: number;
   p_launch: number;
   ev_usd: number;
+  farm_cap_usd: number;
+  farm_gas_usd: number;
+  farm_hold_days: number;
+  farm_airdrop_rate: number;
+  farm_yield_rate: number;
+  break_even_usd: number | null;
   cross_check_usd: number | null;
   cross_check_agree_pct: number | null;
   manual_review: string | null;
@@ -738,10 +744,49 @@ export interface Validation {
   loo_flat_within_2x_pct: number;
   loo_model_rank_ic: number;
   loo_flat_rank_ic: number;
+  loo_bootstrap_resamples: number;
+  loo_median_diff: number;
+  loo_median_diff_ci_lo: number;
+  loo_median_diff_ci_hi: number;
+  loo_mean_diff: number;
+  loo_mean_diff_ci_lo: number;
+  loo_mean_diff_ci_hi: number;
+  slope_b: number;
+  slope_b_ci_lo: number;
+  slope_b_ci_hi: number;
+  slope_loo_median_abs_log_err: number;
+  slope_loo_within_2x_pct: number;
   spearman_implied_vs_tvl: number;
   k_alt: number;
   k_alt_top10_overlap: number;
   k_alt_max_rank_delta_top20: number;
+}
+
+/** One cleaned priced peer, plotted by the Calibration view: what a tokenised protocol of
+ * this size actually trades at, against the model's flat category segments. */
+export interface ScatterPeer {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  multiple: number;
+}
+
+/** One category's segment on the calibration scatter: the shrunk multiple the model uses,
+ * drawn only across the TVL span that category's own priced peers cover. */
+export interface ScatterSegment {
+  category: string;
+  multiple: number;
+  fallback: boolean;
+  peers: number;
+  tvl_lo: number;
+  tvl_hi: number;
+}
+
+export interface ScatterData {
+  peers: ScatterPeer[];
+  segments: ScatterSegment[];
+  top_categories: { category: string; board_tvl_share_pct: number }[];
 }
 
 /** Everything the dashboard renders, from the snapshot. */
@@ -772,6 +817,8 @@ export interface RadarData {
   peers_raw: number;
   peers_deduped: number;
   peers_used: number;
+  unaccounted: number;
+  scatter: ScatterData;
   bands: BandStat[];
   validation: Validation;
   categories: CategoryView[];
@@ -877,6 +924,51 @@ function pearson(a: number[], b: number[]): number {
 }
 
 /**
+ * A pooled size term, fitted the honest way: log multiple on log TVL with category fixed
+ * effects (each category demeaned against its own peers, so the slope is a within-category
+ * effect, never category composition), clamped to [-0.35, -0.05]. Returns the slope alone, or
+ * the slope with its standard error when `withSe` is set. Fitted to be tested, not shipped:
+ * validateModel grades it leave-one-out like everything else the model claims.
+ */
+function fitSlope(set: SnapshotProtocol[], withSe = false): { b: number; se: number } {
+  const groups = new Map<string, SnapshotProtocol[]>();
+  for (const p of set) {
+    const k = categoryKey(p);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(p);
+  }
+  const dxs: number[] = [];
+  const dys: number[] = [];
+  let usedGroups = 0;
+  for (const rs of groups.values()) {
+    if (rs.length < 2) continue;
+    usedGroups++;
+    const mx = rs.reduce((a, r) => a + Math.log(r.tvl_usd), 0) / rs.length;
+    const my = rs.reduce((a, r) => a + Math.log(r.mcap_usd! / r.tvl_usd), 0) / rs.length;
+    for (const r of rs) {
+      dxs.push(Math.log(r.tvl_usd) - mx);
+      dys.push(Math.log(r.mcap_usd! / r.tvl_usd) - my);
+    }
+  }
+  let sxx = 0;
+  let sxy = 0;
+  for (let i = 0; i < dxs.length; i++) {
+    sxx += dxs[i]! * dxs[i]!;
+    sxy += dxs[i]! * dys[i]!;
+  }
+  if (sxx === 0 || dxs.length === 0) return { b: 0, se: 0 };
+  const b = clamp(sxy / sxx, -0.35, -0.05);
+  if (!withSe) return { b, se: 0 };
+  let rss = 0;
+  for (let i = 0; i < dxs.length; i++) {
+    const e = dys[i]! - b * dxs[i]!;
+    rss += e * e;
+  }
+  const dof = Math.max(1, dxs.length - usedGroups - 1);
+  return { b, se: Math.sqrt(rss / dof / sxx) };
+}
+
+/**
  * The model grading itself on the snapshot's own evidence. Leave-one-out over the cleaned peer
  * set: every peer is hidden in turn and its multiple predicted by the model's own rules — the
  * corroboration rule for category shrinkage, the geometric TVL-band fallback otherwise —
@@ -888,6 +980,7 @@ export function validateModel(snapshot: Snapshot, cal: Calibration, board: Board
   const peers = cleanPeers(snapshot).peers;
   const modelErrs: number[] = [];
   const flatErrs: number[] = [];
+  const slopeErrs: number[] = [];
   const predMcaps: number[] = [];
   const flatMcaps: number[] = [];
   const actualMcaps: number[] = [];
@@ -920,6 +1013,12 @@ export function validateModel(snapshot: Snapshot, cal: Calibration, board: Board
       pred = clamp(Math.sqrt(globalEx * bandMed), MODEL.multiple_floor, MODEL.multiple_cap);
     }
     const actual = p.mcap_usd! / p.tvl_usd;
+    // The size term, graded the same way: slope refit on the other peers only, prediction
+    // tilted by (TVL / reference TVL)^b around the category's (or the field's) peer centre.
+    const refPeers = usable ? catOthers : others;
+    const refTvl = Math.exp(refPeers.reduce((a, q) => a + Math.log(q.tvl_usd), 0) / refPeers.length);
+    const predSlope = clamp(pred * Math.pow(p.tvl_usd / refTvl, fitSlope(others).b), MODEL.multiple_floor, MODEL.multiple_cap);
+    slopeErrs.push(Math.abs(Math.log(predSlope / actual)));
     modelErrs.push(Math.abs(Math.log(pred / actual)));
     flatErrs.push(Math.abs(Math.log(globalEx / actual)));
     predMcaps.push(pred * p.tvl_usd);
@@ -927,6 +1026,34 @@ export function validateModel(snapshot: Snapshot, cal: Calibration, board: Board
     actualMcaps.push(p.mcap_usd!);
   });
   const within2x = (errs: number[]): number => Math.round((100 * errs.filter((e) => e < Math.log(2)).length) / Math.max(1, errs.length));
+  // Paired bootstrap on the folds themselves: is the model's median edge over the flat median
+  // distinguishable from zero at this n? A fixed-seed LCG keeps the program deterministic.
+  const BOOTSTRAP_RESAMPLES = 4000;
+  let bootSeed = 0x9e3779b9;
+  const bootRnd = (): number => {
+    bootSeed = (bootSeed * 1664525 + 1013904223) >>> 0;
+    return bootSeed / 4294967296;
+  };
+  const nFolds = modelErrs.length;
+  const medianDiffs: number[] = [];
+  for (let b = 0; b < BOOTSTRAP_RESAMPLES; b++) {
+    const mSample: number[] = [];
+    const fSample: number[] = [];
+    for (let i = 0; i < nFolds; i++) {
+      const j = Math.floor(bootRnd() * nFolds);
+      mSample.push(modelErrs[j]!);
+      fSample.push(flatErrs[j]!);
+    }
+    medianDiffs.push(median(fSample) - median(mSample));
+  }
+  medianDiffs.sort((a, b) => a - b);
+  const medianDiff = median(flatErrs) - median(modelErrs);
+  const medianDiffCiLo = medianDiffs[Math.floor(0.025 * BOOTSTRAP_RESAMPLES)]!;
+  const medianDiffCiHi = medianDiffs[Math.ceil(0.975 * BOOTSTRAP_RESAMPLES) - 1]!;
+  const pairedDiffs = modelErrs.map((e, i) => flatErrs[i]! - e);
+  const meanDiff = mean(pairedDiffs);
+  const meanDiffSe = Math.sqrt(pairedDiffs.reduce((a, d) => a + (d - meanDiff) ** 2, 0) / Math.max(1, nFolds - 1) / nFolds);
+  const slopeFull = fitSlope(peers, true);
   const spearman = pearson(
     ranksOf(board.map((r) => r.implied_value_usd)),
     ranksOf(board.map((r) => r.tvl_usd)),
@@ -944,6 +1071,18 @@ export function validateModel(snapshot: Snapshot, cal: Calibration, board: Board
     loo_flat_within_2x_pct: within2x(flatErrs),
     loo_model_rank_ic: round2(pearson(ranksOf(predMcaps), ranksOf(actualMcaps))),
     loo_flat_rank_ic: round2(pearson(ranksOf(flatMcaps), ranksOf(actualMcaps))),
+    loo_bootstrap_resamples: BOOTSTRAP_RESAMPLES,
+    loo_median_diff: round2(medianDiff),
+    loo_median_diff_ci_lo: round2(medianDiffCiLo),
+    loo_median_diff_ci_hi: round2(medianDiffCiHi),
+    loo_mean_diff: round2(meanDiff),
+    loo_mean_diff_ci_lo: round2(meanDiff - 1.96 * meanDiffSe),
+    loo_mean_diff_ci_hi: round2(meanDiff + 1.96 * meanDiffSe),
+    slope_b: round2(slopeFull.b),
+    slope_b_ci_lo: round2(slopeFull.b - 1.96 * slopeFull.se),
+    slope_b_ci_hi: round2(slopeFull.b + 1.96 * slopeFull.se),
+    slope_loo_median_abs_log_err: round2(median(slopeErrs)),
+    slope_loo_within_2x_pct: within2x(slopeErrs),
     spearman_implied_vs_tvl: round2(spearman),
     k_alt: 6,
     k_alt_top10_overlap: top10Overlap,
@@ -986,6 +1125,18 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       crossCheck !== null && r.model.fallback_multiple && r.model.multiple > 0
         ? Math.round(10 * Math.abs(crossCheck / r.tvl_usd / r.model.multiple - 1) * 100) / 10
         : null;
+    // The plan's own economics, solved in closed form with the plan's own constants. The
+    // expected airdrop is a rate on the position — (implied / TVL) x the 10% community float
+    // x launch priority — and the running cost is the gas (fixed) plus the lending yield
+    // forgone, itself a rate on the position. Break-even position = gas / (airdrop rate -
+    // yield rate); when the airdrop rate does not beat the yield rate there is no break-even
+    // at any size, and the row says so instead of printing a fantasy number.
+    const farmCap = sizeFor(r.tvl_usd);
+    const farmHold = holdDaysFor(r.age_days);
+    const farmGas = gasFor(r.chains.length > 0 ? r.chains[0]! : 'its main chain') * (6 + Math.ceil(farmHold / 7));
+    const airdropRate = (r.implied_value_usd / r.tvl_usd) * MODEL.float_share * (r.model.p_launch / 100);
+    const yieldRate = MODEL.lending_apy * (farmHold / 365);
+    const breakEven = airdropRate > yieldRate ? Math.round(farmGas / (airdropRate - yieldRate)) : null;
     return {
       rank: r.rank,
       slug: r.slug,
@@ -1009,6 +1160,12 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       scale_multiplier: r.model.scale_multiplier,
       p_launch: r.model.p_launch,
       ev_usd: Math.round((r.implied_value_usd * r.model.p_launch) / 100),
+      farm_cap_usd: farmCap,
+      farm_gas_usd: farmGas,
+      farm_hold_days: farmHold,
+      farm_airdrop_rate: Math.round(airdropRate * 10000) / 10000,
+      farm_yield_rate: Math.round(yieldRate * 10000) / 10000,
+      break_even_usd: breakEven,
       cross_check_usd: crossCheck,
       cross_check_agree_pct: agreePct,
       manual_review: manual,
@@ -1018,6 +1175,43 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       farm_steps: r.farm_steps,
     };
   });
+  const cleanedPeers = cleanPeers(snapshot).peers;
+  const scatterPeers: ScatterPeer[] = cleanedPeers.map((p) => ({
+    slug: p.slug,
+    name: p.name,
+    category: p.category,
+    tvl_usd: p.tvl_usd,
+    multiple: round4(p.mcap_usd! / p.tvl_usd),
+  }));
+  const scatterSegments: ScatterSegment[] = [...cal.categories.values()]
+    .map((stat) => {
+      const inCat = cleanedPeers.filter((p) => categoryKey(p) === stat.category);
+      if (inCat.length === 0) return null;
+      return {
+        category: stat.category,
+        multiple: stat.multiple,
+        fallback: stat.fallback,
+        peers: inCat.length,
+        tvl_lo: Math.min(...inCat.map((p) => p.tvl_usd)),
+        tvl_hi: Math.max(...inCat.map((p) => p.tvl_usd)),
+      };
+    })
+    .filter((s): s is ScatterSegment => s !== null);
+  const boardTvlByCat = new Map<string, number>();
+  let boardTvlTotal = 0;
+  for (const r of board) {
+    boardTvlTotal += r.tvl_usd;
+    const k = r.category ?? '(uncategorised)';
+    boardTvlByCat.set(k, (boardTvlByCat.get(k) ?? 0) + r.tvl_usd);
+  }
+  const scatter: ScatterData = {
+    peers: scatterPeers,
+    segments: scatterSegments,
+    top_categories: [...boardTvlByCat.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([category, tvl]) => ({ category, board_tvl_share_pct: Math.round((1000 * tvl) / boardTvlTotal) / 10 })),
+  };
   const categories: CategoryView[] = [...cal.categories.values()]
     .filter((c) => c.total >= 3)
     .sort((a, b) => b.total - a.total)
@@ -1050,6 +1244,12 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
     peers_raw: cal.peers_raw,
     peers_deduped: cal.peers_deduped,
     peers_used: cal.peers_used,
+    unaccounted:
+      snapshot.protocols.length -
+      cal.tokenised -
+      board.length -
+      (cal.screened_category + cal.screened_product_name + cal.screened_exchange_name + cal.screened_version),
+    scatter,
     bands: cal.bands,
     validation,
     categories,

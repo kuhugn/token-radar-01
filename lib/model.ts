@@ -1,4 +1,4 @@
-// Token Launch Radar — model radar-2.4.
+// Token Launch Radar — model radar-2.5.
 //
 // One sealed DefiLlama snapshot in, one ranked board of pre-token protocols out. Every figure on the
 // board is derived from the snapshot's own ten fields per protocol; no protocol name is ever
@@ -86,7 +86,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-2.4';
+export const MODEL_VERSION = 'radar-2.5';
 
 /** The model's constants, stated on the dashboard's Methodology view. */
 export const MODEL = {
@@ -787,6 +787,23 @@ export interface ScatterData {
   peers: ScatterPeer[];
   segments: ScatterSegment[];
   top_categories: { category: string; board_tvl_share_pct: number }[];
+  /** The board's top 10 by implied value, plotted on the same axes at the multiple the
+   * model gives them — the reader can check the ranking against the peer cloud directly. */
+  board_top10: { slug: string; name: string; tvl_usd: number; implied_multiple: number }[];
+}
+
+/** Board-wide farm economics, counted from the rows themselves: how many plans break
+ * even at the suggested size, how many carry a finite break-even at all, and the row
+ * that comes nearest. Printed in every detail drawer as the board's own context. */
+export interface FarmBoard {
+  rows: number;
+  finite_be: number;
+  be_within_cap: number;
+  be_le_2500: number;
+  be_le_5000: number;
+  nearest_name: string;
+  nearest_be_usd: number;
+  nearest_cap_usd: number;
 }
 
 /** Everything the dashboard renders, from the snapshot. */
@@ -819,6 +836,7 @@ export interface RadarData {
   peers_used: number;
   unaccounted: number;
   scatter: ScatterData;
+  farm_board: FarmBoard;
   bands: BandStat[];
   validation: Validation;
   categories: CategoryView[];
@@ -1211,6 +1229,26 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
       .map(([category, tvl]) => ({ category, board_tvl_share_pct: Math.round((1000 * tvl) / boardTvlTotal) / 10 })),
+    board_top10: board.slice(0, 10).map((r) => ({
+      slug: r.slug,
+      name: r.name,
+      tvl_usd: r.tvl_usd,
+      implied_multiple: round4(r.implied_value_usd / r.tvl_usd),
+    })),
+  };
+  const finiteBe = rows.filter((r) => r.break_even_usd !== null);
+  const nearestBe = finiteBe.reduce((best, r) =>
+    r.break_even_usd! / r.farm_cap_usd < best.break_even_usd! / best.farm_cap_usd ? r : best,
+  );
+  const farmBoard: FarmBoard = {
+    rows: rows.length,
+    finite_be: finiteBe.length,
+    be_within_cap: finiteBe.filter((r) => r.break_even_usd! <= r.farm_cap_usd).length,
+    be_le_2500: finiteBe.filter((r) => r.break_even_usd! <= 2500).length,
+    be_le_5000: finiteBe.filter((r) => r.break_even_usd! <= 5000).length,
+    nearest_name: nearestBe.name,
+    nearest_be_usd: Math.round(nearestBe.break_even_usd!),
+    nearest_cap_usd: nearestBe.farm_cap_usd,
   };
   const categories: CategoryView[] = [...cal.categories.values()]
     .filter((c) => c.total >= 3)
@@ -1250,6 +1288,7 @@ export function buildRadar(snapshot: Snapshot, snapshotSha256: string): { board:
       board.length -
       (cal.screened_category + cal.screened_product_name + cal.screened_exchange_name + cal.screened_version),
     scatter,
+    farm_board: farmBoard,
     bands: cal.bands,
     validation,
     categories,

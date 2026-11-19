@@ -31,12 +31,10 @@
   function header() {
     var screened = D.screened_category + D.screened_product_name + D.screened_exchange_name + D.screened_version;
     var v = D.validation;
-    var rc = D.scatter.top_categories.filter(function (t) { return t.category === 'Risk Curators'; })[0];
     return '<header class="top"><div class="brand"><h1>Token Launch <span class="rad">Radar</span></h1>' +
       '<p>Pre-token protocols ranked by the value their token would carry if it launched on today\'s record. ' +
       'Model <b>' + esc(D.model_version) + '</b> calibrates itself on this snapshot\'s own tokenised protocols; protocols whose token already trades sit in Live, never in the ranking.</p>' +
-      '<p class="thesis">Risk Curators hold <b>' + (rc ? rc.board_tvl_share_pct.toFixed(1) : '0') + '% of the board\'s TVL</b> and are priced by a fallback — their only priced peer is an oracle token that cannot speak for them, and every such row is flagged. ' +
-      'This is a sizing tool, not a price target: every value carries its range, and the range is a scenario, not a confidence interval.</p>' +
+      '<p class="thesis"><b>$' + (D.total_implied / 1e9).toFixed(2) + 'B of pre-token value, ranked</b> &middot; ' + (D.total_protocols - D.unaccounted) + ' of ' + D.total_protocols + ' protocols accounted for &middot; priced against <b>' + D.peers_used + ' live comps</b>.</p>' +
       '<p class="funnel">' + D.total_protocols + ' tracked &rarr; ' + D.tokenised + ' record a token (top ' + D.live_size + ' by market cap in Live) &rarr; ' + D.pre_token + ' pre-token &rarr; ' + screened + ' set aside by the screen &rarr; <b>' + D.board_size + ' ranked</b></p></div>' +
       '<div class="stats">' +
       '<div class="stat"><b>' + D.total_protocols + '</b><span>in the snapshot</span></div>' +
@@ -158,7 +156,8 @@
         ? '<p class="mut">The expected airdrop rate is below what the same USDC earns by simply lending it — every extra dollar loses the difference over the hold, before gas. At this bankroll the plan is a paid ticket, not an investment; the board says so here rather than hiding it in the plan\'s prose.</p>'
         : r.break_even_usd > r.farm_cap_usd
           ? '<p class="mut">The plan only pays for itself from a position of about ' + usd(r.break_even_usd) + '; the planned ' + usd(r.farm_cap_usd) + ' does not reach it. Skip at this bankroll, or size up knowingly.</p>'
-          : '<p class="mut">The planned position is past break-even: from about ' + usd(r.break_even_usd) + ' the expected airdrop covers the plan\'s own gas and forgone yield.</p>');
+          : '<p class="mut">The planned position is past break-even: from about ' + usd(r.break_even_usd) + ' the expected airdrop covers the plan\'s own gas and forgone yield.</p>') +
+      '<p class="mut">Across the board: <b>' + D.farm_board.be_within_cap + ' of ' + D.farm_board.rows + ' plans break even at the suggested size</b> — the nearest needs ' + (D.farm_board.nearest_be_usd / D.farm_board.nearest_cap_usd).toFixed(1) + '&times; (' + esc(D.farm_board.nearest_name) + ': ' + usd(D.farm_board.nearest_be_usd) + ' against a ' + usd(D.farm_board.nearest_cap_usd) + ' plan). But ' + D.farm_board.finite_be + ' of ' + D.farm_board.rows + ' rows carry a finite break-even, and ' + D.farm_board.be_le_5000 + ' clear inside a $5,000 bankroll.</p>';
     return '<h2>' + esc(r.name) + (r.watchlist ? star : '') + '</h2><div class="sub">' + esc(r.slug) + ' · rank #' + r.rank + ' of ' + D.board_size + (r.watchlist ? ' · on the snapshot watchlist' : ' · early, below the watchlist floor') + '</div>' +
       '<div class="kv">' +
       '<div><span>Implied value</span><b>' + usd(r.implied_value_usd) + '</b></div>' +
@@ -219,6 +218,12 @@
     S.peers.forEach(function (p) {
       svg += '<circle cx="' + X(p.tvl_usd).toFixed(1) + '" cy="' + Y(p.multiple).toFixed(1) + '" r="2.6" fill="' + (colorOf[p.category || ''] || '#64748B') + '" opacity="0.9"><title>' + esc(p.name) + ' — ' + p.multiple.toFixed(3) + '&times; on ' + usd(p.tvl_usd) + '</title></circle>';
     });
+    // the board's top 10 by implied value — white diamonds at the multiple the model
+    // gives each of them, on the same axes as the peers they are priced from
+    S.board_top10.forEach(function (b) {
+      var cx = X(b.tvl_usd), cy = Y(b.implied_multiple);
+      svg += '<path d="M ' + cx.toFixed(1) + ' ' + (cy - 6).toFixed(1) + ' L ' + (cx + 6).toFixed(1) + ' ' + cy.toFixed(1) + ' L ' + cx.toFixed(1) + ' ' + (cy + 6).toFixed(1) + ' L ' + (cx - 6).toFixed(1) + ' ' + cy.toFixed(1) + ' Z" fill="#ffffff" stroke="#0e1626" stroke-width="1.1"><title>' + esc(b.name) + ' (board top 10) — ' + b.implied_multiple.toFixed(3) + '&times; on ' + usd(b.tvl_usd) + '</title></path>';
+    });
     // annotate the extremes and the peer nearest the median
     var byMult = [...S.peers].sort(function (a, b) { return a.multiple - b.multiple; });
     var nearGm = S.peers.reduce(function (best, p) { return Math.abs(Math.log(p.multiple / gm)) < Math.abs(Math.log(best.multiple / gm)) ? p : best; }, S.peers[0]);
@@ -233,7 +238,7 @@
     });
     svg += '<text x="' + X0 + '" y="' + (Y1 + 42) + '" class="svgt">protocol TVL (log scale)</text>' +
       '<text x="' + (X1 - 4) + '" y="' + (Y1 + 42) + '" class="svgt" text-anchor="end">realised market cap / TVL (log scale)</text>';
-    var legend = S.top_categories.map(function (t) {
+    var legend = '<span class="lgchip"><i style="background:#ffffff"></i>Board top 10 by implied value — white diamonds</span>' + S.top_categories.map(function (t) {
       return '<span class="lgchip"><i style="background:' + colorOf[t.category] + '"></i>' + esc(t.category) + ' · ' + t.board_tvl_share_pct.toFixed(1) + '% of board TVL</span>';
     }).join('');
     var shareSum = S.top_categories.reduce(function (a, t) { return a + t.board_tvl_share_pct; }, 0);
@@ -241,7 +246,7 @@
       '<p>Every priced peer the model calibrates on: what a tokenised protocol of this size actually trades at. The model is the horizontal segments — one shrunk category median each, drawn only over the TVL span that category\'s own peers cover; fallback categories have no segment, because no category median prices them. A size term was fitted and left out (Methodology has the test) — the segments are flat because the model is.</p>' +
       '<div class="lgrow">' + legend + '</div>' +
       '<svg class="calib" viewBox="0 0 1200 475" role="img" aria-label="Scatter of ' + S.peers.length + ' priced peers, realised multiple against TVL, with category median segments">' + svg + '</svg>' +
-      '<p>' + S.peers.length + ' cleaned priced peers; the eight coloured categories hold ' + shareSum.toFixed(0) + '% of the board\'s TVL, the rest are grey. The vertical spread — ' + byMult[0].multiple.toFixed(3) + '&times; to ' + byMult[byMult.length - 1].multiple.toFixed(3) + '&times; — is why every implied value on the board ships with a range instead of pretending to be a point.</p></div>';
+      '<p>' + S.peers.length + ' cleaned priced peers; the eight coloured categories hold ' + shareSum.toFixed(0) + '% of the board\'s TVL, the rest are grey. The vertical spread — ' + byMult[0].multiple.toFixed(3) + '&times; to ' + byMult[byMult.length - 1].multiple.toFixed(3) + '&times; — is why every implied value on the board ships with a range instead of pretending to be a point. The white diamonds are the board\'s top 10 by implied value, plotted at the multiples the model gives them: the ranking itself, drawn on the same axes as its evidence.</p></div>';
   }
 
   function liveView() {

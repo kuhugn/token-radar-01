@@ -1,4 +1,4 @@
-// Token Launch Radar (model radar-2.4) — a make.fun token-radar-01 entry. Node 22, standard library only.
+// Token Launch Radar (model radar-2.5) — a make.fun token-radar-01 entry. Node 22, standard library only.
 //
 // Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), calibrates the model in
 // lib/model.ts on the snapshot's own tokenised protocols, ranks every rankable pre-token protocol,

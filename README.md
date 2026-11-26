@@ -6,7 +6,30 @@
 
 A make.fun **token-radar-01** entry: a radar that ranks pre-token protocols by the value their
 token would carry if it launched on the snapshot's own record, and gives every row a concrete
-farm plan. Model **radar-2.5**.
+farm plan. Model **radar-3.0**.
+
+## Audit summary
+
+Method. Each pre-token protocol is valued at the market-cap/TVL multiple of
+its live peers: the geometric median multiple of its DeFiLlama category,
+shrunk toward the global median (0.186) with k = 2.08, then adjusted for
+growth, maturity, breadth and scale. Protocols in categories with too few
+priced peers fall back to the corroborated global median. Coverage is
+complete: all 758 protocols in the snapshot are accounted for — 416 already
+tokenised, 198 ranked, 144 screened out, 0 unaccounted — and every ranked
+value is priced against 113 live comparables.
+
+Verification. Leave-one-out over the 113 comparables: median absolute log
+error 1.35 for the model vs 1.54 for a flat global median (typical miss
+3.9× vs 4.7×); rank correlation 0.86. The model does not win every metric:
+within-2× coverage is 28% vs 31% for the flat median.
+
+Tried and rejected. A pooled size-elasticity term (slope −0.20, 95% CI
+[−0.40, −0.01]) cut LOO median error to 1.16 but dropped within-2×
+coverage from 28% to 22% — sharper centre, fatter tails — so it was not
+shipped. An earlier "17% better than baseline" claim failed a paired
+bootstrap (4,000 resamples: 95% CI [−0.19, +0.34] includes zero) and was
+withdrawn.
 
 ## Run it
 
@@ -62,7 +85,7 @@ expected value — thin numbers included.
 - `vendor/makefun-board.ts` — the kit's dossier library, byte-for-byte as shipped.
 - `dashboard/` — a static page (board, detail drawer, Live view, Methodology), no framework,
   no network; it renders `data.js`, which `main.ts` writes beside it.
-- `screenshots/` — the board, a protocol detail, a filtered view and the methodology view,
-  captured from the real generated page at 1440×900.
+- `screenshots/` — the lead board (thesis + Top 5), a protocol detail drawer, the calibration
+  view and the full board, captured from the real generated page at 1440×900.
 
 MIT licensed — see `LICENSE`.

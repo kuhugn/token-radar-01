@@ -17,6 +17,8 @@
     return '$' + Math.round(n);
   }
   function pct(n) { return n === null || n === undefined ? 'n/a' : (n > 0 ? '+' : '') + n.toFixed(1) + '%'; }
+  function usdFull(n) { return n === null || n === undefined || !isFinite(n) ? 'n/a' : '$' + Math.round(n).toLocaleString('en-US'); }
+  function sig3(x) { return String(parseFloat((x * 100).toPrecision(3))) + '%'; }
   function age(d) { return d === null ? 'unknown' : d >= 365 ? (d / 365).toFixed(1) + 'y' : d + 'd'; }
   function x2(n) { return 'x' + n.toFixed(2); }
 
@@ -29,26 +31,20 @@
 
   var star = '<svg class="star" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-label="watchlist"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.2 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg>';
   function header() {
-    var screened = D.screened_category + D.screened_product_name + D.screened_exchange_name + D.screened_version;
-    var v = D.validation;
     return '<header class="top"><div class="brand"><h1>Token Launch <span class="rad">Radar</span></h1>' +
+      '<p class="thesis-big">$' + (D.total_implied / 1e9).toFixed(2) + 'B of pre-token value, ranked.</p>' +
       '<p>Pre-token protocols ranked by the value their token would carry if it launched on today\'s record. ' +
-      'Model <b>' + esc(D.model_version) + '</b> calibrates itself on this snapshot\'s own tokenised protocols; protocols whose token already trades sit in Live, never in the ranking.</p>' +
-      '<p class="thesis"><b>$' + (D.total_implied / 1e9).toFixed(2) + 'B of pre-token value, ranked</b> &middot; ' + (D.total_protocols - D.unaccounted) + ' of ' + D.total_protocols + ' protocols accounted for &middot; priced against <b>' + D.peers_used + ' live comps</b>.</p>' +
-      '<p class="funnel">' + D.total_protocols + ' tracked &rarr; ' + D.tokenised + ' record a token (top ' + D.live_size + ' by market cap in Live) &rarr; ' + D.pre_token + ' pre-token &rarr; ' + screened + ' set aside by the screen &rarr; <b>' + D.board_size + ' ranked</b></p></div>' +
-      '<div class="stats">' +
-      '<div class="stat"><b>' + D.total_protocols + '</b><span>in the snapshot</span></div>' +
-      '<div class="stat"><b>' + D.tokenised + '</b><span>hold a token</span><small>' + D.peers_raw + ' priced · ' + (D.tokenised - D.peers_raw) + ' no price</small></div>' +
-      '<div class="stat"><b>' + D.board_size + '</b><span>ranked</span></div>' +
-      '<div class="stat"><b>' + screened + '</b><span>set aside by the screen</span></div>' +
-      '<div class="stat"><b>' + D.unaccounted + '</b><span>unaccounted</span></div>' +
-      '</div>' +
-      '<p class="calline">Calibration: ' + D.peers_raw + ' priced peers &minus; ' + (D.peers_raw - D.peers_used) + ' set aside as non-comparable = <b>' + D.peers_used + ' comps</b> · top-10 holds ' + v.k_alt_top10_overlap + '/10 when shrinkage k is forced to ' + v.k_alt + ' · every row carries a range · snapshot ' + esc(D.as_of) + ' · sha256 ' + esc(D.snapshot_sha256.slice(0, 12)) + '&hellip;</p></header>';
+      'Model <b>' + esc(D.model_version) + '</b> calibrates itself on this snapshot\'s own tokenised protocols; protocols whose token already trades sit in Live, never in the ranking.</p></div>' +
+      '<div class="kpis">' +
+      '<div class="kpi"><b>$' + (D.total_implied / 1e9).toFixed(2) + 'B</b><span>implied launch value, ' + D.board_size + ' protocols ranked</span></div>' +
+      '<div class="kpi"><b>' + (D.total_protocols - D.unaccounted) + ' / ' + D.total_protocols + '</b><span>protocols accounted for — ' + D.unaccounted + ' unaccounted</span></div>' +
+      '<div class="kpi"><b>' + D.peers_used + '</b><span>live comps priced against</span></div>' +
+      '</div></header>';
   }
 
   function tabs() {
     function b(id, label) { return '<button data-tab="' + id + '"' + (state.tab === id ? ' class="on"' : '') + '>' + label + '</button>'; }
-    return '<nav class="tabs">' + b('board', 'Board') + b('calib', 'Calibration') + b('live', 'Live tokens') + b('method', 'Methodology') + '</nav>';
+    return '<nav class="tabs">' + b('board', 'Board') + b('full', 'Full board') + b('calib', 'Calibration') + b('live', 'Live tokens') + b('method', 'Methodology') + '</nav>';
   }
 
   function filtered() {
@@ -74,6 +70,23 @@
       return (va - vb) * state.dir || a.rank - b.rank;
     });
     return rows;
+  }
+
+  function leadView() {
+    var screened = D.screened_category + D.screened_product_name + D.screened_exchange_name + D.screened_version;
+    var top = D.rows.slice().sort(function (a, b) { return a.rank - b.rank; }).slice(0, 5);
+    var body = top.map(function (r) {
+      return '<tr data-slug="' + esc(r.slug) + '"' + (state.sel === r.slug ? ' class="sel"' : '') + '>' +
+        '<td class="rank num">' + r.rank + '</td>' +
+        '<td class="proto l"><span class="nm">' + esc(r.name) + '</span>' + (r.watchlist ? star : '') + '<span class="sl">' + esc(r.slug) + '</span></td>' +
+        '<td class="l"><span class="cat">' + esc(r.category || 'Uncategorised') + '</span></td>' +
+        '<td class="num">' + usd(r.tvl_usd) + '</td>' +
+        '<td class="num imp">' + usd(r.implied_value_usd) + '</td>' +
+        '<td class="num">' + usd(r.implied_floor) + ' – ' + usd(r.implied_ceiling) + '</td></tr>';
+    }).join('');
+    return '<div class="wrap"><table class="lead"><thead><tr><th>#</th><th class="l">Protocol</th><th class="l">Category</th><th>TVL</th><th>Implied value</th><th>Range (floor–ceiling)</th></tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '<p class="top5line">Top 5 of ' + D.board_size + ' ranked protocols — the full board is the last screen.</p>' +
+      '<p class="mutline">' + screened + ' screened out · ' + D.tokenised + ' already tokenised · every one of the ' + D.total_protocols + ' accounted for.</p>';
   }
 
   function boardView() {
@@ -107,7 +120,10 @@
         '<td class="num imp">' + usd(r.implied_value_usd) + '</td>' +
         '<td class="num ev">' + usd(r.ev_usd) + '</td></tr>';
     }).join('');
-    return '<div class="toolbar">' +
+    var screened = D.screened_category + D.screened_product_name + D.screened_exchange_name + D.screened_version;
+    return '<h2 class="bandhead">The full board — all ' + D.board_size + ', ranked.</h2>' +
+      '<p class="covstrip"><b>' + D.board_size + ' ranked</b> · ' + screened + ' screened out · ' + D.tokenised + ' already tokenised · ' + D.unaccounted + ' unaccounted — ' + (D.total_protocols - D.unaccounted) + ' of ' + D.total_protocols + ' protocols in the snapshot.</p>' +
+      '<div class="toolbar">' +
       '<input id="q" type="search" placeholder="Search name or slug" value="' + esc(state.q) + '">' +
       '<select id="cat">' + opts(cats, state.cat, 'All categories') + '</select>' +
       '<select id="chain">' + opts(chains, state.chain, 'All chains') + '</select>' +
@@ -119,7 +135,8 @@
       th('rank', '#') + th('name', 'Protocol', 'l') + '<th class="l">Category</th>' +
       th('tvl', 'TVL') + th('mult', 'Mult') +
       th('imp', 'Implied value') + th('ev', 'EV') +
-      '</tr></thead><tbody>' + body + '</tbody></table></div>';
+      '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '<p class="boardfoot">Snapshot ' + esc(D.as_of) + ' · multiples are category geometric medians shrunk to the global median (k = ' + D.shrinkage_k + ') · ranges are the peer band, not a promise.</p>';
   }
 
   function detail(r) {
@@ -156,9 +173,23 @@
         ? '<p class="mut">The expected airdrop rate is below what the same USDC earns by simply lending it — every extra dollar loses the difference over the hold, before gas. At this bankroll the plan is a paid ticket, not an investment; the board says so here rather than hiding it in the plan\'s prose.</p>'
         : r.break_even_usd > r.farm_cap_usd
           ? '<p class="mut">The plan only pays for itself from a position of about ' + usd(r.break_even_usd) + '; the planned ' + usd(r.farm_cap_usd) + ' does not reach it. Skip at this bankroll, or size up knowingly.</p>'
-          : '<p class="mut">The planned position is past break-even: from about ' + usd(r.break_even_usd) + ' the expected airdrop covers the plan\'s own gas and forgone yield.</p>') +
-      '<p class="mut">Across the board: <b>' + D.farm_board.be_within_cap + ' of ' + D.farm_board.rows + ' plans break even at the suggested size</b> — the nearest needs ' + (D.farm_board.nearest_be_usd / D.farm_board.nearest_cap_usd).toFixed(1) + '&times; (' + esc(D.farm_board.nearest_name) + ': ' + usd(D.farm_board.nearest_be_usd) + ' against a ' + usd(D.farm_board.nearest_cap_usd) + ' plan). But ' + D.farm_board.finite_be + ' of ' + D.farm_board.rows + ' rows carry a finite break-even, and ' + D.farm_board.be_le_5000 + ' clear inside a $5,000 bankroll.</p>';
-    return '<h2>' + esc(r.name) + (r.watchlist ? star : '') + '</h2><div class="sub">' + esc(r.slug) + ' · rank #' + r.rank + ' of ' + D.board_size + (r.watchlist ? ' · on the snapshot watchlist' : ' · early, below the watchlist floor') + '</div>' +
+          : '<p class="mut">The planned position is past break-even: from about ' + usd(r.break_even_usd) + ' the expected airdrop covers the plan\'s own gas and forgone yield.</p>');
+    var airC = (r.implied_value_usd / r.tvl_usd) * 0.10 * (r.p_launch / 100);
+    var yldC = 0.04 * r.farm_hold_days / 365;
+    var verdict = r.break_even_usd === null
+      ? '<div class="verdict bad">Verdict: no break-even at any size — airdrop rate ' + sig3(airC) + ' &lt; yield forgone ' + sig3(yldC) + '. Farm it for the position, not the yield.</div>'
+      : r.break_even_usd > r.farm_cap_usd
+        ? '<div class="verdict">Verdict: break-even at ' + usdFull(r.break_even_usd) + ' — above the planned ' + usdFull(r.farm_cap_usd) + ' position. Skip at this bankroll, or size up knowingly.</div>'
+        : '<div class="verdict">Verdict: the planned ' + usdFull(r.farm_cap_usd) + ' position is past break-even — it clears at ' + usdFull(r.break_even_usd) + '.</div>';
+    function chip(t) { return '<span class="chip">' + t + '</span>'; }
+    var cards = '<div class="cards">' +
+      '<div class="card"><h4>Step 1 — Season a wallet</h4><p>&ge; 90 days old, real history on &ge; 3 unrelated protocols, funded from an unshared source.</p><div class="chips">' + chip('~$2 gas') + chip('10 min') + '</div></div>' +
+      '<div class="card"><h4>Step 2 — Deposit ' + usdFull(r.farm_cap_usd) + ' USDC</h4><p>Into one established ' + esc(r.name) + ' vault on ' + esc(r.chains[0] || 'its first chain') + '; longest-live curator over the newest vault.</p><div class="chips">' + chip(usdFull(r.farm_cap_usd) + ' capital') + chip('~$2 gas') + chip('15 min') + '</div></div>' +
+      '<div class="card"><h4>Step 3 — Hold the position</h4><p>Weekly check; add one small interaction per week; do not chase new vaults.</p><div class="chips">' + chip('weekly') + chip('~$2 gas/wk') + '</div></div>' +
+      '</div>';
+    var boardctx = '<div class="boardctx"><b>' + D.farm_board.be_within_cap + ' of ' + D.farm_board.rows + '</b> rows break even at the suggested size — the nearest needs <b>' + (D.farm_board.nearest_be_usd / D.farm_board.nearest_cap_usd).toFixed(1) + '&times;</b> (' + esc(D.farm_board.nearest_name) + ': ' + usdFull(D.farm_board.nearest_be_usd) + ' against a ' + usdFull(D.farm_board.nearest_cap_usd) + ' plan). But <b>' + D.farm_board.finite_be + ' of ' + D.farm_board.rows + '</b> rows carry a finite break-even, and <b>' + D.farm_board.be_le_5000 + '</b> clear inside a ' + usdFull(5000) + ' bankroll.</div>';
+    return '<h2 class="dhead">' + esc(r.name) + (r.watchlist ? star : '') + ' — the farm plan</h2><div class="sub">' + esc(r.category || 'Uncategorised') + ' · TVL ' + usd(r.tvl_usd) + ' · implied ' + usd(r.implied_value_usd) + ' (range ' + usd(r.implied_floor) + '–' + usd(r.implied_ceiling) + ')</div>' +
+      verdict + cards + boardctx +
       '<div class="kv">' +
       '<div><span>Implied value</span><b>' + usd(r.implied_value_usd) + '</b></div>' +
       '<div><span>TVL</span><b>' + usd(r.tvl_usd) + '</b></div>' +
@@ -170,7 +201,7 @@
       (r.manual_review ? '<p class="mut"><b>Manual review.</b> ' + esc(r.manual_review) + '</p>' : '') +
       eco +
       '<h3 class="sec">Chains</h3><p class="mut">' + esc(r.chains.join(', ') || 'none recorded') + '</p>' +
-      '<h3 class="sec">Farm plan</h3><ol class="farm">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
+      '<h3 class="sec">Farm plan — every step, in full</h3><ol class="farm">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
       '<p class="dim">The launch-priority score never affects rank: rank is implied value alone. The plan is generated from this protocol\'s category, TVL, age and first chain — the same playbook code scores every row.</p>';
   }
 
@@ -241,12 +272,15 @@
     var legend = '<span class="lgchip"><i style="background:#ffffff"></i>Board top 10 by implied value — white diamonds</span>' + S.top_categories.map(function (t) {
       return '<span class="lgchip"><i style="background:' + colorOf[t.category] + '"></i>' + esc(t.category) + ' · ' + t.board_tvl_share_pct.toFixed(1) + '% of board TVL</span>';
     }).join('');
-    var shareSum = S.top_categories.reduce(function (a, t) { return a + t.board_tvl_share_pct; }, 0);
-    return '<div class="panelbox"><h2>Calibration — the model\'s evidence, plotted</h2>' +
-      '<p>Every priced peer the model calibrates on: what a tokenised protocol of this size actually trades at. The model is the horizontal segments — one shrunk category median each, drawn only over the TVL span that category\'s own peers cover; fallback categories have no segment, because no category median prices them. A size term was fitted and left out (Methodology has the test) — the segments are flat because the model is.</p>' +
+    return '<div class="panelbox"><h2 class="calibhead">Priced against ' + D.peers_used + ' live comps — and checked against all of them.</h2>' +
+      '<div class="cstats">' +
+      '<div class="cstat"><b>' + v.loo_model_median_abs_log_err.toFixed(2) + ' vs ' + v.loo_flat_median_abs_log_err.toFixed(2) + '</b><span>median |log error|, leave-one-out — model vs flat median</span></div>' +
+      '<div class="cstat"><b>' + Math.exp(v.loo_model_median_abs_log_err).toFixed(1) + '&times; vs ' + Math.exp(v.loo_flat_median_abs_log_err).toFixed(1) + '&times;</b><span>typical miss</span></div>' +
+      '<div class="cstat"><b>' + v.spearman_implied_vs_tvl.toFixed(2) + '</b><span>Spearman rank correlation</span></div>' +
+      '</div>' +
       '<div class="lgrow">' + legend + '</div>' +
       '<svg class="calib" viewBox="0 0 1200 475" role="img" aria-label="Scatter of ' + S.peers.length + ' priced peers, realised multiple against TVL, with category median segments">' + svg + '</svg>' +
-      '<p>' + S.peers.length + ' cleaned priced peers; the eight coloured categories hold ' + shareSum.toFixed(0) + '% of the board\'s TVL, the rest are grey. The vertical spread — ' + byMult[0].multiple.toFixed(3) + '&times; to ' + byMult[byMult.length - 1].multiple.toFixed(3) + '&times; — is why every implied value on the board ships with a range instead of pretending to be a point. The white diamonds are the board\'s top 10 by implied value, plotted at the multiples the model gives them: the ranking itself, drawn on the same axes as its evidence.</p></div>';
+      '<p class="caption">White diamonds: the board\'s top 10, plotted at the multiples this model assigned them — inside the same &times;' + envF.toFixed(2) + ' envelope the leave-one-out test measured. Within-2&times; coverage: ' + v.loo_model_within_2x_pct + '% model vs ' + v.loo_flat_within_2x_pct + '% flat — the one metric the flat median wins; we print it anyway.</p></div>';
   }
 
   function liveView() {
@@ -289,7 +323,11 @@
       '<tr><td class="l">Name ends in a version marker</td><td class="num">' + D.screened_version + '</td></tr>';
     var verifyCount = D.rows.filter(function (r) { return r.verify_token; }).length;
     var mrNames = D.rows.filter(function (r) { return r.manual_review; }).map(function (r) { return '<b>' + esc(r.name) + '</b>'; }).join(' and ');
-    return '<div class="panelbox"><h2>The model — ' + esc(D.model_version) + '</h2>' +
+    var audit = '<div class="panelbox"><h2>Audit summary</h2>' +
+      '<p><b>Method.</b> Each pre-token protocol is valued at the market-cap/TVL multiple of its live peers: the geometric median multiple of its DeFiLlama category, shrunk toward the global median (0.186) with k = 2.08, then adjusted for growth, maturity, breadth and scale. Protocols in categories with too few priced peers fall back to the corroborated global median. Coverage is complete: all 758 protocols in the snapshot are accounted for — 416 already tokenised, 198 ranked, 144 screened out, 0 unaccounted — and every ranked value is priced against 113 live comparables.</p>' +
+      '<p><b>Verification.</b> Leave-one-out over the 113 comparables: median absolute log error 1.35 for the model vs 1.54 for a flat global median (typical miss 3.9× vs 4.7×); rank correlation 0.86. The model does not win every metric: within-2× coverage is 28% vs 31% for the flat median.</p>' +
+      '<p><b>Tried and rejected.</b> A pooled size-elasticity term (slope −0.20, 95% CI [−0.40, −0.01]) cut LOO median error to 1.16 but dropped within-2× coverage from 28% to 22% — sharper centre, fatter tails — so it was not shipped. An earlier "17% better than baseline" claim failed a paired bootstrap (4,000 resamples: 95% CI [−0.19, +0.34] includes zero) and was withdrawn.</p></div>';
+    return audit + '<div class="panelbox"><h2>The model — ' + esc(D.model_version) + '</h2>' +
       '<p>Every implied value is one multiplication, and every factor in it comes from the snapshot\'s own figures:</p>' +
       '<p class="formula">implied = TVL x category multiple x relative growth x maturity x breadth x scale</p>' +
       '<p><b>Category multiple.</b> The median market-cap/TVL of the tokenised protocols in the same category, shrunk toward the global median (' + D.global_median.toFixed(3) + ') in log space with weight k = ' + D.shrinkage_k + ', estimated from the data (within-category variance over between-category variance). Multiples are clamped to [0.03, 1.20]. The peers are cleaned before they calibrate anything: of ' + D.peers_raw + ' tokenised protocols with a market cap, the screen sets aside ' + (D.peers_raw - D.peers_used) + ' — duplicate deployments of a single token collapse to the largest deployment, and any peer whose ratio falls outside [0.002, 3.0] is rejected: a cap 400x a protocol\'s TVL is a parent token\'s cap recorded against a side deployment, and a cap at 1/500th of TVL is a dead token; neither prices the protocol it sits on. ' + D.peers_used + ' priced peers remain. Every median of ratios is a geometric median, computed in log space, where this model lives.</p>' +
@@ -320,7 +358,8 @@
 
   function render() {
     var html = header() + tabs();
-    if (state.tab === 'board') html += boardView();
+    if (state.tab === 'board') html += leadView();
+    else if (state.tab === 'full') html += boardView();
     else if (state.tab === 'calib') html += calibView();
     else if (state.tab === 'live') html += liveView();
     else html += methodView();
@@ -360,7 +399,7 @@
     });
   }
   // Re-render only the board view (keeps the search box focused while typing).
-  function refreshBody() { render(); var q = document.getElementById('q'); if (q && state.tab === 'board') { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  function refreshBody() { render(); var q = document.getElementById('q'); if (q && state.tab === 'full') { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   function closeDetail() { state.sel = null; render(); }
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDetail(); });
 

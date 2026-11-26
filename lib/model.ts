@@ -86,7 +86,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-2.5';
+export const MODEL_VERSION = 'radar-3.0';
 
 /** The model's constants, stated on the dashboard's Methodology view. */
 export const MODEL = {
